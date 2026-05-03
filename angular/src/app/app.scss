@@ -143,11 +143,12 @@
   }
 }
 
-// ── Live telemetry feed panel ─────────────────────────────────────────────
-// height: 100% + min-height: 0 mirror the video-stage constraints so the
-// panel fills its grid column without pushing past the viewport.
+// ── Right panel (shared shell) ────────────────────────────────────────────
+// Both state variants (Vault and Live Feed) occupy the same 300px grid column
+// and need identical height constraints. Specific list/entry styles follow.
 
-.feed-panel {
+.feed-panel,
+.vault-panel {
   border: 1px solid var(--cyan);
   box-shadow: 0 0 12px rgba(0, 255, 255, 0.12);
   display: flex;
@@ -211,4 +212,68 @@
 
   &.spike  { color: #ffff00; }
   &.severe { color: var(--magenta); text-shadow: 0 0 4px var(--magenta); }
+}
+
+// ── Vault Library panel ───────────────────────────────────────────────────
+
+.vault-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.4rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.vault-empty {
+  font-size: 0.72rem;
+  opacity: 0.35;
+  text-align: center;
+  padding: 1.5rem 0;
+  margin: 0;
+}
+
+// Each entry is a 3-row card: filename / stats / date.
+.vault-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem 0.35rem;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.entry-filename {
+  color: var(--cyan);
+  font-weight: bold;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 6px var(--cyan);
+}
+
+.entry-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+}
+
+.stat-speed,
+.stat-dist { color: rgba(255, 255, 255, 0.7); }
+
+.stat-sep  { opacity: 0.25; }
+
+.stat-impacts {
+  color: var(--magenta);
+  text-shadow: 0 0 6px var(--magenta);
+  letter-spacing: 0.05em;
+}
+
+.entry-date {
+  font-size: 0.68rem;
+  opacity: 0.35;
 }

@@ -56,26 +56,57 @@
       </div>
     </section>
 
-    <!-- Right: live telemetry feed -->
-    <aside class="feed-panel">
-      <h2 class="panel-title">LIVE TELEMETRY FEED</h2>
-      <div class="feed-list">
-        @if (feedEntries().length === 0) {
-          <p class="feed-empty">Waiting for playback&hellip;</p>
-        }
-        @for (entry of feedEntries(); track entry.t) {
-          <div class="feed-entry">
-            <span class="feed-time">{{ formatTime(entry.t) }}</span>
-            <span class="feed-speed">{{ entry.speedKmh }}&nbsp;KM/H</span>
-            <span class="feed-g"
-              [class.spike]="entry.gForce > 1.5"
-              [class.severe]="entry.gForce > 3.0">
-              {{ entry.gForce.toFixed(2) }}&nbsp;G
-            </span>
-          </div>
-        }
-      </div>
-    </aside>
+    <!-- Right: State A (idle) = Vault Library; State B (clip loaded) = Live Feed -->
+    @if (telemetry()) {
+
+      <aside class="feed-panel">
+        <h2 class="panel-title">LIVE TELEMETRY FEED</h2>
+        <div class="feed-list">
+          @if (feedEntries().length === 0) {
+            <p class="feed-empty">Waiting for playback&hellip;</p>
+          }
+          @for (entry of feedEntries(); track entry.t) {
+            <div class="feed-entry">
+              <span class="feed-time">{{ formatTime(entry.t) }}</span>
+              <span class="feed-speed">{{ entry.speedKmh }}&nbsp;KM/H</span>
+              <span class="feed-g"
+                [class.spike]="entry.gForce > 1.5"
+                [class.severe]="entry.gForce > 3.0">
+                {{ entry.gForce.toFixed(2) }}&nbsp;G
+              </span>
+            </div>
+          }
+        </div>
+      </aside>
+
+    } @else {
+
+      <aside class="vault-panel">
+        <h2 class="panel-title">VERGARAVERSE VAULT</h2>
+        <div class="vault-list">
+          @if (library().length === 0) {
+            <p class="vault-empty">No rides catalogued yet.</p>
+          }
+          @for (clip of library(); track clip.id) {
+            <div class="vault-entry">
+              <span class="entry-filename">{{ clip.filename }}</span>
+              <div class="entry-stats">
+                <span class="stat-speed">{{ formatSpeedKmh(clip.maxSpeed) }}</span>
+                <span class="stat-sep">·</span>
+                <span class="stat-dist">{{ formatDistanceKm(clip.totalDistanceM) }}</span>
+                @if (clip.highlights?.length) {
+                  <span class="stat-impacts">
+                    [ {{ clip.highlights!.length }}&nbsp;IMPACT{{ clip.highlights!.length !== 1 ? 'S' : '' }} ]
+                  </span>
+                }
+              </div>
+              <span class="entry-date">{{ formatDate(clip.parsedAt) }}</span>
+            </div>
+          }
+        </div>
+      </aside>
+
+    }
 
   </div>
 </div>

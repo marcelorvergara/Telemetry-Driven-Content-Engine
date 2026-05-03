@@ -1,8 +1,11 @@
-import { Component, OnDestroy, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 import { TelemetryResult } from './core/models/telemetry.model';
+import { ClipMetadataDto } from './core/models/clip.model';
 import { Mp4DemuxerService } from './core/services/mp4-demuxer';
 import { GpmfParserService } from './core/services/gpmf-parser.service';
 import { TelemetryMathService } from './core/services/telemetry-math';
+import { ClipApiService, buildClipRequest } from './core/services/clip-api.service';
+import { TelemetryVaultService } from './core/services/telemetry-vault.service';
 import { TelemetryOverlay } from './core/components/telemetry-overlay/telemetry-overlay';
 
 interface FeedEntry {
@@ -18,20 +21,34 @@ interface FeedEntry {
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
-export class AppComponent implements OnDestroy {
+export class AppComponent implements OnInit, OnDestroy {
   readonly telemetry    = signal<TelemetryResult | null>(null);
   readonly videoSrc     = signal<string>('/assets/sample.mp4');
   readonly isProcessing = signal<boolean>(false);
   readonly feedEntries  = signal<FeedEntry[]>([]);
+  readonly library      = signal<ClipMetadataDto[]>([]);
   pipelineError: string | null = null;
 
   private objectUrl: string | null = null;
 
   constructor(
-    private readonly demuxer: Mp4DemuxerService,
-    private readonly parser:  GpmfParserService,
-    private readonly math:    TelemetryMathService,
+    private readonly demuxer:  Mp4DemuxerService,
+    private readonly parser:   GpmfParserService,
+    private readonly math:     TelemetryMathService,
+    private readonly clipApi:  ClipApiService,
+    private readonly vault:    TelemetryVaultService,
   ) {}
+
+  // Load the Library from PostgreSQL on app start. Failure is non-fatal —
+  // the user can still parse new clips; the Library just starts empty.
+  ngOnInit(): void {
+    this.clipApi.getAll().subscribe({
+      next:  clips => this.library.set(
+        [...clips].sort((a, b) => new Date(b.parsedAt).getTime() - new Date(a.parsedAt).getTime()),
+      ),
+      error: err => console.warn('[API] GET /api/clips failed:', err),
+    });
+  }
 
   async onFileSelected(event: Event): Promise<void> {
     const file = (event.target as HTMLInputElement).files?.[0];
@@ -65,6 +82,25 @@ export class AppComponent implements OnDestroy {
         ` ${result.accl.length} ACCL atoms,` +
         ` ${result.grav.length} GRAV atoms`,
       );
+
+      // Stage 3 — Vault write: persist heavy arrays to IndexedDB.
+      // Must complete before the Library POST — if the POST succeeds but the
+      // Vault write fails, a future lookup would find the summary in Postgres
+      // but no arrays for playback. See Write-Through Cache Flow in skill.md.
+      await this.vault.save(file.name, file.size, result);
+
+      // Stage 4 — Library write-through: upsert the summary to PostgreSQL.
+      // Fire-and-forget per the Data Boundary Rule; silent degradation on failure.
+      this.clipApi.upsert(buildClipRequest(file, result)).subscribe({
+        next: saved => this.library.update(existing => {
+          const idx = existing.findIndex(c => c.id === saved.id);
+          return idx >= 0
+            ? [...existing.slice(0, idx), saved, ...existing.slice(idx + 1)]
+            : [saved, ...existing];
+        }),
+        error: err => console.warn('[API] POST /api/clips failed (silent degradation):', err),
+      });
+
     } catch (err) {
       this.pipelineError = String(err);
       console.error('[PIPELINE] Failure:', err);
@@ -109,6 +145,20 @@ export class AppComponent implements OnDestroy {
     const m   = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
     return `${m}:${sec.toString().padStart(2, '0')}`;
+  }
+
+  formatSpeedKmh(ms: number | null): string {
+    return ms !== null ? `${(ms * 3.6).toFixed(0)} KM/H` : '—';
+  }
+
+  formatDistanceKm(m: number | null): string {
+    return m !== null ? `${(m / 1000).toFixed(1)} KM` : '—';
+  }
+
+  formatDate(iso: string): string {
+    return new Date(iso).toLocaleDateString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric',
+    });
   }
 
   ngOnDestroy(): void {
