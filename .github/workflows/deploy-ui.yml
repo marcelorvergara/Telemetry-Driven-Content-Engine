@@ -1,0 +1,43 @@
+name: Deploy Angular UI to Firebase Hosting
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'angular/**'
+      - '.github/workflows/deploy-ui.yml'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/451399421629/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
+          service_account: 'github-actions-deployer-386@vergaraverse.iam.gserviceaccount.com'
+
+      - name: Install dependencies and Build
+        working-directory: ./angular
+        run: |
+          npm ci
+          npm run build -- --configuration production
+
+      - name: Deploy to Firebase Hosting
+        working-directory: ./angular
+        run: |
+          npx firebase-tools deploy --only hosting --project vergaraverse
