@@ -1,0 +1,55 @@
+name: Deploy Spring Boot API to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'api/**'
+      - '.github/workflows/deploy-api.yml'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    # Required permissions for Workload Identity Federation
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/451399421629/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
+          service_account: 'github-actions-deployer-386@vergaraverse.iam.gserviceaccount.com'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker Auth
+        run: gcloud auth configure-docker southamerica-east1-docker.pkg.dev --quiet
+
+      - name: Build Docker Image
+        working-directory: ./api
+        run: |
+          docker build -t southamerica-east1-docker.pkg.dev/vergaraverse/vergaraverse-docker-repo/vergaraverse-api:latest .
+          
+      - name: Push Docker Image
+        run: |
+          docker push southamerica-east1-docker.pkg.dev/vergaraverse/vergaraverse-docker-repo/vergaraverse-api:latest
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: vergaraverse-api
+          image: southamerica-east1-docker.pkg.dev/vergaraverse/vergaraverse-docker-repo/vergaraverse-api:latest
+          region: southamerica-east1
+          env_vars: |
+            NEON_DB_URL=${{ secrets.NEON_DB_URL }}
+            NEON_DB_USERNAME=${{ secrets.NEON_DB_USERNAME }}
+            NEON_DB_PASSWORD=${{ secrets.NEON_DB_PASSWORD }}
