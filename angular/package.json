@@ -1,0 +1,37 @@
+{
+  "name": "angular",
+  "version": "0.0.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "build:wasm": "cd ../go-wasm && tinygo build -o gpmf.wasm -target wasm . && echo built gpmf.wasm",
+    "copy:wasm_exec": "node -e \"const p=require('child_process').execSync('tinygo env TINYGOROOT').toString().trim(); require('fs').copyFileSync(p+'/targets/wasm_exec.js','public/assets/wasm_exec.js'); console.log('copied wasm_exec.js');\"",
+    "prepare:wasm": "npm run build:wasm && npm run copy:wasm_exec"
+  },
+  "private": true,
+  "packageManager": "npm@11.13.0",
+  "dependencies": {
+    "@angular/common": "^21.2.0",
+    "@angular/compiler": "^21.2.0",
+    "@angular/core": "^21.2.0",
+    "@angular/forms": "^21.2.0",
+    "@angular/platform-browser": "^21.2.0",
+    "@angular/router": "^21.2.0",
+    "mp4box": "^2.3.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0",
+    "webm-muxer": "^5.1.4"
+  },
+  "devDependencies": {
+    "@angular/build": "^21.2.9",
+    "@angular/cli": "^21.2.9",
+    "@angular/compiler-cli": "^21.2.0",
+    "jsdom": "^28.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2",
+    "vitest": "^4.0.8"
+  }
+}

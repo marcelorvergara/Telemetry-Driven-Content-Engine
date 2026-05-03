@@ -1,0 +1,79 @@
+<main style="padding: 2rem; background: #000; color: #00ffff; font-family: monospace; min-height: 100vh;">
+  <h1 style="margin: 0 0 1.5rem; letter-spacing: 0.05em;">VERGARAVERSE</h1>
+
+  <!-- File selection — triggers the full demux → WASM pipeline -->
+  <label style="display: inline-block; cursor: pointer; margin-bottom: 1rem;">
+    <input
+      type="file"
+      accept=".mp4,video/mp4"
+      style="display: none"
+      [disabled]="isProcessing()"
+      (change)="onFileSelected($event)">
+    <span style="
+      display: inline-block;
+      padding: 0.75rem 1.5rem;
+      background: {{ isProcessing() ? '#333' : '#ff00ff' }};
+      color: #fff;
+      border: none;
+      cursor: {{ isProcessing() ? 'not-allowed' : 'pointer' }};
+      letter-spacing: 0.1em;
+      font-family: monospace;
+      font-size: 0.9rem;">
+      {{ isProcessing() ? 'PARSING TELEMETRY...' : 'SELECT GOPRO MP4' }}
+    </span>
+  </label>
+
+  @if (pipelineError) {
+    <p style="color: #ff00ff; margin: 0.5rem 0 1rem; font-size: 0.85rem;">
+      &#9888; {{ pipelineError }}
+    </p>
+  }
+
+  @if (telemetry()) {
+    <p style="color: #00ffff; margin: 0 0 1rem; font-size: 0.8rem; opacity: 0.7;">
+      GPS {{ telemetry()!.gps.length }} &nbsp;|&nbsp;
+      ACCL {{ telemetry()!.accl.length }} &nbsp;|&nbsp;
+      GRAV {{ telemetry()!.grav.length }}
+    </p>
+  }
+
+  <!--
+    #videoEl template reference on a native <video> resolves to HTMLVideoElement
+    and is passed directly to the overlay — no ViewChild or ElementRef needed.
+    The overlay's rAF loop reads videoEl.currentTime as its master clock.
+  -->
+  <div class="video-wrapper">
+    <video
+      #videoEl
+      [src]="videoSrc()"
+      controls
+      playsinline
+      style="display: block; width: 100%; max-width: 960px;">
+    </video>
+
+    <app-telemetry-overlay
+      #overlay
+      [videoEl]="videoEl"
+      [telemetry]="telemetry()" />
+  </div>
+
+  @if (telemetry()) {
+    <label style="display: inline-block; cursor: pointer; margin-top: 1rem;">
+      <span
+        style="
+          display: inline-block;
+          padding: 0.75rem 1.5rem;
+          color: #000;
+          border: none;
+          letter-spacing: 0.1em;
+          font-family: monospace;
+          font-size: 0.9rem;"
+        [style.background]="overlay.isExporting() ? '#333' : '#00ffff'"
+        [style.cursor]="overlay.isExporting() ? 'not-allowed' : 'pointer'"
+        [style.color]="overlay.isExporting() ? '#888' : '#000'"
+        (click)="!overlay.isExporting() && overlay.startExport()">
+        {{ overlay.isExporting() ? 'EXPORTING...' : 'EXPORT OVERLAY (WEBM)' }}
+      </span>
+    </label>
+  }
+</main>

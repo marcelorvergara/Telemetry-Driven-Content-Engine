@@ -1,0 +1,14 @@
+// Host fills the video wrapper exactly; pointer-events: none passes clicks
+// through to the video controls underneath.
+:host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: block;
+}
+
+canvas {
+  display: block;
+  width: 98%;
+  height: 90%;
+}

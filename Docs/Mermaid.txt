@@ -1,0 +1,32 @@
+---
+config:
+  theme: mc
+---
+graph TD
+    subgraph Browser_Client["Client Side (Browser)"]
+        A[User File Selection] --> B[Angular Frontend]
+        
+        subgraph WASM_Layer["Processing Core"]
+            B -->|File Reference| C[Go-WASM Module]
+            C -->|Binary Chunking| D[GPMF Parser Engine]
+            D -->|Extraction| C
+            C -->|JSON Telemetry| B
+        end
+        
+        subgraph Render_Loop["Visualization Engine"]
+            B -->|Frame Data| E[Canvas API]
+            F[HTML5 Video Element] -->|currentTime| E
+            G[Glitch Service] -.->|Shader/FX| E
+            E -->|VergaraVerse Gauges| H[Final UI Overlay]
+        end
+    end
+
+    subgraph Backend_Server["Persistence Layer"]
+        B -->|REST API: Metadata/Sessions| I[Spring Boot 3]
+        I -->|JPA/Hibernate| J[(PostgreSQL)]
+    end
+
+    style C fill:#00ffff,stroke:#333,stroke-width:2px,color:#000
+    style D fill:#00ffff,stroke:#333,stroke-width:2px,color:#000
+    style G fill:#ff00ff,stroke:#333,stroke-width:2px,color:#000
+    style J fill:#333,stroke:#ff00ff,stroke-width:2px,color:#fff

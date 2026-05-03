@@ -1,0 +1,10 @@
+.video-wrapper {
+  position: relative;
+  display: inline-block;
+  line-height: 0; // collapse whitespace gap between video and overlay host
+
+  video {
+    display: block;
+    max-width: 100%;
+  }
+}
