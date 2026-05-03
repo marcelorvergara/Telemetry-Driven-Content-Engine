@@ -105,3 +105,59 @@ If the final assignment is still an integer type or the divide is absent, Option
 **Step 4 — 64 MB budget spot-check**:
 
 For every `make([]T, n)` added to the parser, confirm `n` is bounded by a known constant (max sensor rate × max clip duration), not by a value read from the file. A malformed GPMF `repeat` field of `0xFFFF` must never drive a heap allocation.
+
+---
+
+## 4 — Neon Cold-Start Trap
+
+**When to use**: Before any change to `spring.jpa.hibernate.ddl-auto` or `spring.flyway.enabled` in `application.yml`.
+
+**The trap**: `ddl-auto: update` asks Hibernate to diff the schema on every application startup. On a serverless Neon database, the first connection after a cold-start takes 1–3 seconds. If Hibernate opens multiple connections during the `update` diff (to inspect existing columns, read constraints, lock tables) it races against Neon's connection pool warming and can fail with `PSQLException: connection refused` or produce a half-applied schema diff with no clear error.
+
+**Current state**: `ddl-auto: update` with `flyway.enabled: false` is intentional for early prototyping while the schema is still changing sprint-to-sprint. It is **not safe for production** and must be replaced before any non-local environment is used.
+
+**The migration path** (do this when the schema stabilises):
+1. Set `ddl-auto: validate` — Hibernate verifies schema only, never modifies it.
+2. Set `flyway.enabled: true`.
+3. Author `V1__create_schema.sql` matching the entity definitions exactly.
+4. Verify `mvn flyway:migrate` succeeds against Neon before deploying.
+
+**Danger signal**: If a startup log shows `HHH90000031: DDL via Hibernate SchemaManagementTool` on a Neon URL, the trap is active. Investigate before the next deploy.
+
+---
+
+## 5 — Write-Through Cache Flow
+
+**When to use**: Before implementing or debugging any Angular code that triggers WASM parsing or calls the backend API.
+
+**The invariant**: The three steps below must always execute in strict order. Breaking the sequence creates an inconsistency between the IndexedDB Vault and the PostgreSQL Library Catalog that is invisible until the user closes the tab or clears storage.
+
+**Exact order of operations**:
+
+```
+1. WASM Parse
+   Angular extracts the MET track → passes Uint8Array to Go-WASM → receives ParsedClip JSON.
+   On failure: surface error to user, abort all subsequent steps.
+
+2. Save Arrays to IndexedDB (Vault)
+   Store the full GPS9[], ACCL[], GRAV[] arrays keyed by (filename + fileSize + lastModified).
+   This step must complete (resolved Promise) before step 3 starts.
+   Rationale: if the backend POST succeeds but IndexedDB write fails, future lookups
+   will find the summary in Postgres but no arrays in the Vault, producing a broken state.
+
+3. POST Summary to Backend (Library Catalog)
+   POST /api/clips with the ClipMetadata summary derived from the ParsedClip.
+   On failure: silent degradation is acceptable for MVP — log the error, do not block the UI.
+   The user still has the full clip data in IndexedDB for the current session.
+```
+
+**Cache-hit path** (skip all three steps):
+
+```
+App load → GET /api/clips → render dashboard clip library.
+User opens clip → GET /api/clips/lookup?filename=&fileSize=
+  200 → load arrays from IndexedDB → proceed to rAF overlay (no WASM).
+  404 → run step 1–3 above (cache miss).
+```
+
+**Angular lookup contract**: the `GET /api/clips/lookup` 200 response guarantees the summary exists in Postgres. It does **not** guarantee the Vault arrays are present (user may have cleared IndexedDB). The Angular service must handle the case where IndexedDB returns `undefined` even after a 200 from the API, falling back to re-running WASM.

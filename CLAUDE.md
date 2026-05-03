@@ -141,3 +141,27 @@ The parser owns the SCAL divide. Angular owns derived math. If a number looks wr
 2. Is the Angular service treating the value as already-physical? (it must)
 
 Mixing these in either direction produced the G-force unit bug in Sprint 1. The rule is enforced by the "Option B checkpoint" in `skill.md`.
+
+---
+
+## Backend Architecture (Sprint 4)
+
+Rules governing the Spring Boot 3 + PostgreSQL persistence layer. These constraints apply to every feature that touches the API or Angular's network calls.
+
+### Data Boundary Rule
+
+The Angular frontend is **strictly forbidden** from sending full telemetry arrays to PostgreSQL. The 200 Hz ACCL, GPS9, and GRAV sample arrays are heavy by design — a 60-minute ride at 200 Hz ACCL produces ~720 000 rows. They live permanently in the browser's IndexedDB **Vault**.
+
+PostgreSQL is the **Library Catalog**: it stores only the `ClipMetadata` summary (max speed, total distance, start/end GPS, highlights array of up to 5 peak timestamps). If a proposed backend field requires iterating over raw samples to compute, it belongs in Angular's `TelemetryMathService`, not in a new database column.
+
+### Identity Rule
+
+This is a single-user MVP. There is no authentication, no user ID, and no multi-tenant isolation. The composite key `(filename, fileSize)` is the sole identity for a clip. Do not introduce a `userId` column, a `deviceId`, or any other ownership concept until multi-user requirements are explicit.
+
+The upsert in `ClipMetadataService` relies on this uniqueness: `findByFilenameAndFileSize` before save. Adding a third dimension to the key without updating the upsert path will silently create duplicates.
+
+### Highlight Array Rule
+
+The `highlights` field stores up to 5 peak G-force event timestamps as a native PostgreSQL `bigint[]` column. No join table, no separate `Highlight` entity, no JSON serialisation. Hibernate 6.4 (Spring Boot 3.3+) maps `Long[]` to `bigint[]` natively with `@Column(columnDefinition = "bigint[]")`.
+
+If the number of highlights per clip needs to grow beyond ~20 elements, reconsider this approach — array columns are not individually indexable. For MVP scope, the native array is strictly simpler than a join table.
