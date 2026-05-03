@@ -94,3 +94,50 @@ getResultLen() uint32
 ```
 
 JS writes the MET binary into the pointer returned by `allocBuffer`, calls `parseGPMF`, then reads JSON from `getResultPtr/Len` on success.
+
+---
+
+## Lessons Learned — Sprint 1
+
+Patterns discovered during implementation that are not obvious from the spec alone. These extend the Development Rules above with the *why* behind each constraint.
+
+### Stride Alignment Rule
+
+After reading `size × repeat` data bytes for a KLV field, advance the cursor to the **next 4-byte boundary** before reading the next KLV. GPMF pads every field's data; skipping this silently misaligns every subsequent read.
+
+```go
+// correct
+dataLen := int(size) * int(repeat)
+padded  := (dataLen + 3) &^ 3
+pos     += 8 + padded   // 8-byte header + padded data
+
+// wrong — all reads after the first field are from the wrong offset
+pos += 8 + dataLen
+```
+
+Symptom when violated: the second `STRM` block's FourCC decodes as garbage bytes. The parser either returns `ErrMalformedGPMF` or — worse — silently interprets a data byte as a type byte and produces numerically plausible but wrong output.
+
+### Timestamp Precision Rule
+
+All `.t` values emitted to Angular **must be milliseconds from video start**, matching `HTMLVideoElement.currentTime × 1000`. A unit mismatch is silent at compile time but causes the rAF interpolator to clip every sample to the first or last atom in the array.
+
+- GPS9 UTC → subtract `videoStartSec * 1000` after converting the GPS 2000-epoch to Unix ms.
+- ACCL / GRAV synthetic → `(cumulative_index / rate_hz) * 1000`.
+- Never emit seconds, microseconds, or raw GPS 2000-epoch values to Angular.
+
+**Sprint 1 discovery**: The G-force bar was glitching because `calculateGForceMagnitude` returned the m/s² deviation from 1 G (correct math, wrong unit), but the overlay threshold constants (`SPIKE_THRESHOLD = 1.5`, etc.) expected G units. The fix was a single `/ G` in `TelemetryMathService`. Same class of error as a timestamp unit mismatch — correct in isolation, silent and catastrophic at the consumer.
+
+### 64 MB WASM Budget — Hard Ceiling
+
+The Go-WASM module shares the browser's main-thread JS heap alongside the 4K video decoder. 64 MB is not aspirational; exceeding it causes Chrome to OOM-kill the tab mid-export.
+
+Back-of-envelope: a 60-minute ride at 200 Hz ACCL = 720 000 samples × ~48 bytes ≈ 34 MB. That leaves ~30 MB for GPS9 + GRAV + the JSON serialisation scratch buffer — tight. Pre-allocate slices at parser startup with known upper bounds; never `append` inside an unbounded STRM loop.
+
+### Option B is the Source of Truth for Units
+
+The parser owns the SCAL divide. Angular owns derived math. If a number looks wrong in the frontend, check this boundary first:
+
+1. Is the Go parser emitting post-SCAL floats? (`lat / scal[0]`, not `lat`)
+2. Is the Angular service treating the value as already-physical? (it must)
+
+Mixing these in either direction produced the G-force unit bug in Sprint 1. The rule is enforced by the "Option B checkpoint" in `skill.md`.
