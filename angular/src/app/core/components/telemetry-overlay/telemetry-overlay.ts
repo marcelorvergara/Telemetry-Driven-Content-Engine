@@ -13,13 +13,18 @@ import { TelemetryResult } from '../../models/telemetry.model';
 import { TelemetryMathService } from '../../services/telemetry-math';
 
 // G-force thresholds for visual state transitions.
-const SPIKE_THRESHOLD = 1.5;   // instant-snap on impact (no easing up)
-const SEVERE_THRESHOLD = 3.0;  // RGB chromatic-aberration split on speed text
-const MAX_G_SCALE = 4.0;       // bar and bloom full-scale reference
+const SPIKE_THRESHOLD  = 1.5;
+const SEVERE_THRESHOLD = 3.0;
+const MAX_G_SCALE      = 4.0;
 
 // Rates are per animation frame (~60 Hz).
-const EASE_FACTOR = 0.10;           // drain: closes 10% of gap per frame
-const PEAK_DECAY_PER_FRAME = 0.003; // ghost drifts ~0.18 G/s at 60 Hz
+const EASE_FACTOR          = 0.10;
+const PEAK_DECAY_PER_FRAME = 0.003;
+
+// Ghost canvas export resolution — gauges are vector text/lines so 1080p is
+// sufficient quality and avoids the CPU/memory choke of a 4K canvas buffer.
+const EXPORT_W = 1920;
+const EXPORT_H = 1080;
 
 @Component({
   selector: 'app-telemetry-overlay',
@@ -28,207 +33,199 @@ const PEAK_DECAY_PER_FRAME = 0.003; // ghost drifts ~0.18 G/s at 60 Hz
   styleUrl: './telemetry-overlay.scss',
 })
 export class TelemetryOverlay implements OnDestroy {
-  // The video element whose currentTime drives the master clock.
-  readonly videoEl = input.required<HTMLVideoElement>();
-  // Null until the WASM parser completes; drawFrame bails early until then.
+  readonly videoEl   = input.required<HTMLVideoElement>();
   readonly telemetry = input<TelemetryResult | null>(null);
 
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
-  private readonly ngZone = inject(NgZone);
-  private readonly math = inject(TelemetryMathService);
+  private readonly ngZone    = inject(NgZone);
+  private readonly math      = inject(TelemetryMathService);
 
   readonly isExporting = signal<boolean>(false);
 
   private canvas!: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
   private rafId = 0;
-  // Set during export; the rAF tick calls it after every drawFrame to capture the frame.
-  private frameCapture: (() => void) | null = null;
-  // CSS pixel dimensions of the canvas — drawing code uses these so the context
-  // scale transform (DPR or export scale) maps them to the correct buffer pixels.
-  private canvasWidth = 0;
+  private canvasWidth  = 0;
   private canvasHeight = 0;
-  private exportBlackBg = false;
 
-  // ── Visual decay state ───────────────────────────────────────────────────────
-  // All display state is strictly local to this component.
+  // ── Visual decay state ───────────────────────────────────────────────────
   private currentDisplayedGForce = 0;
-  private peakGForce = 0;
-  // Tracks the active TelemetryResult reference so decay state resets on new load.
+  private peakGForce              = 0;
   private activeTelemetry: TelemetryResult | null = null;
+  // Last speed computed by drawFrame — read by the export ghost canvas so
+  // it does not need to re-run GPS interpolation per video frame.
+  private lastSpeed = 0;
+
+  // ── Ghost canvas export state ────────────────────────────────────────────
+  private mediaRecorder:    MediaRecorder | null = null;
+  private recordedChunks:   Blob[] = [];
+  // Stored so stopExport() can removeEventListener if the user cancels before
+  // the video reaches its natural end (prevents a stale listener memory leak).
+  private exportVideoEl:     HTMLVideoElement | null = null;
+  private videoEndedHandler: (() => void) | null = null;
 
   constructor() {
-    // afterNextRender fires once after the first DOM render — safe to read
-    // nativeElement and begin the rAF loop.
     afterNextRender(() => {
       this.canvas = this.canvasRef().nativeElement;
-      this.ctx = this.canvas.getContext('2d')!;
+      this.ctx    = this.canvas.getContext('2d')!;
       this.startLoop();
     });
   }
 
-  // ── Export ──────────────────────────────────────────────────────────────────
+  // ── Export ──────────────────────────────────────────────────────────────
 
-  // Uses WebCodecs VideoEncoder (not MediaRecorder) so the VP9 alpha plane is
-  // preserved — MediaRecorder silently discards alpha even with the VP9 codec.
   async startExport(): Promise<void> {
-    if (typeof VideoEncoder === 'undefined') {
-      console.error('[EXPORT] WebCodecs VideoEncoder not available in this browser');
+    if (typeof MediaRecorder === 'undefined') {
+      console.error('[EXPORT] MediaRecorder not available');
+      return;
+    }
+    const videoEl = this.videoEl();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (typeof (videoEl as any).requestVideoFrameCallback !== 'function') {
+      console.error('[EXPORT] requestVideoFrameCallback not supported in this browser');
       return;
     }
 
-    const videoEl = this.videoEl();
+    // Ghost canvas: exists only in JS heap, never appended to the DOM.
+    // MediaRecorder captures this canvas; the display canvas is untouched
+    // so the user can watch the video and see the live overlay throughout.
+    const ghost    = document.createElement('canvas');
+    ghost.width    = EXPORT_W;
+    ghost.height   = EXPORT_H;
+    const ghostCtx = ghost.getContext('2d')!;
+    this.recordedChunks = [];
 
-    // Scale canvas buffer to the video's native resolution for a crisp export.
-    const cssW   = this.canvasWidth  || this.canvas.clientWidth;
-    const cssH   = this.canvasHeight || this.canvas.clientHeight;
-    const exportW = videoEl.videoWidth  || Math.round(cssW * (window.devicePixelRatio || 1));
-    const exportH = videoEl.videoHeight || Math.round(cssH * (window.devicePixelRatio || 1));
-    this.canvas.width  = exportW;
-    this.canvas.height = exportH;
-    this.ctx.scale(exportW / cssW, exportH / cssH);
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9'
+      : 'video/webm';
 
-    // VP9 alpha encoding is not yet supported in Chrome WebCodecs (as of 2025).
-    // isConfigSupported() detects this before we commit, avoiding a closed-encoder crash loop.
-    const alphaConfig = {
-      codec: 'vp09.00.10.08', width: exportW, height: exportH,
-      bitrate: 8_000_000, framerate: 60, alpha: 'keep',
-    } as unknown as VideoEncoderConfig;
-    const { supported: alphaOk } = await VideoEncoder.isConfigSupported(alphaConfig);
-    const useAlpha = alphaOk === true;
-    if (!useAlpha) {
-      console.warn('[EXPORT] VP9 alpha not supported — black background used. Apply Screen blend mode in CapCut.');
-      this.exportBlackBg = true;
-    }
-
-    const { Muxer, ArrayBufferTarget } = await import('webm-muxer');
-    const target = new ArrayBufferTarget();
-    const muxer  = new Muxer({
-      target,
-      video: { codec: 'V_VP9', width: exportW, height: exportH, alpha: useAlpha },
-      firstTimestampBehavior: 'offset',
+    const stream   = ghost.captureStream(30);
+    const recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: 5_000_000,
     });
+    this.mediaRecorder = recorder;
 
-    const encoder = new VideoEncoder({
-      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error:  e => console.error('[EXPORT] Encoder:', e),
-    });
-    encoder.configure(useAlpha ? alphaConfig : {
-      codec: 'vp09.00.10.08', width: exportW, height: exportH,
-      bitrate: 8_000_000, framerate: 60,
-    });
+    recorder.ondataavailable = (e: BlobEvent) => {
+      if (e.data.size > 0) this.recordedChunks.push(e.data);
+    };
 
-    let frameCount   = 0;
-    let lastTsUs     = -1;
-    let finalizing   = false;
-
-    const finalize = async () => {
-      this.frameCapture = null;
-      await encoder.flush();
-      muxer.finalize();
-      const blob = new Blob([target.buffer], { type: 'video/webm' });
+    recorder.onstop = () => {
+      // Normal completion: ended listener already fired and was auto-removed
+      // by { once: true }, but we still null the references for symmetry.
+      this.exportVideoEl     = null;
+      this.videoEndedHandler = null;
+      const blob = new Blob(this.recordedChunks, { type: mimeType });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
       a.download = 'telemetry-overlay.webm';
       a.click();
       URL.revokeObjectURL(url);
-      this.canvasWidth = 0; // let syncCanvasSize restore DPR display resolution
-      this.exportBlackBg = false;
+      this.recordedChunks = [];
+      this.mediaRecorder  = null;
       this.isExporting.set(false);
     };
 
-    this.frameCapture = () => {
-      if (videoEl.ended) {
-        if (!finalizing) { finalizing = true; finalize(); }
-        return;
-      }
-      if (encoder.state === 'closed') return;
-      const tsUs = Math.round(videoEl.currentTime * 1_000_000);
-      if (tsUs <= lastTsUs) return; // skip duplicate timestamps between rAF ticks
-      lastTsUs = tsUs;
-      const frame = new VideoFrame(this.canvas, { timestamp: tsUs });
-      encoder.encode(frame, { keyFrame: frameCount % 150 === 0 });
-      frame.close();
-      frameCount++;
+    recorder.start();
+    this.isExporting.set(true);
+    videoEl.currentTime = 0;
+
+    // requestVideoFrameCallback fires exactly once per decoded video frame.
+    // Re-arming from inside the callback means we only wake up when a real
+    // frame arrives — no CPU churn between frames, no duplicate captures.
+    const onFrame = (_now: DOMHighResTimeStamp, _meta: unknown): void => {
+      if (!this.isExporting()) return;
+
+      // Black background so the gauges are visible on Screen blend mode.
+      ghostCtx.fillStyle = '#000000';
+      ghostCtx.fillRect(0, 0, EXPORT_W, EXPORT_H);
+      this.drawSpeedReadout(ghostCtx, EXPORT_W, EXPORT_H, this.lastSpeed);
+      this.drawGForceBar(ghostCtx, EXPORT_W, EXPORT_H, this.currentDisplayedGForce, this.peakGForce);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (videoEl as any).requestVideoFrameCallback(onFrame);
     };
 
-    videoEl.currentTime = 0;
-    this.isExporting.set(true);
+    // 'ended' is handled by a dedicated one-time listener rather than a
+    // check inside onFrame. requestVideoFrameCallback can stop firing a few
+    // frames before videoEl.ended becomes true, so relying on it for the
+    // stop trigger causes the recorder to hang at the end of the video.
+    this.exportVideoEl     = videoEl;
+    this.videoEndedHandler = () => recorder.stop();
+    videoEl.addEventListener('ended', this.videoEndedHandler, { once: true });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (videoEl as any).requestVideoFrameCallback(onFrame);
     videoEl.play();
+  }
+
+  private stopExport(): void {
+    // Remove the ended listener before stopping so it cannot fire after
+    // cleanup and call stop() on an already-stopped recorder.
+    if (this.exportVideoEl && this.videoEndedHandler) {
+      this.exportVideoEl.removeEventListener('ended', this.videoEndedHandler);
+      this.exportVideoEl     = null;
+      this.videoEndedHandler = null;
+    }
+    if (this.mediaRecorder?.state === 'recording') {
+      this.mediaRecorder.stop();
+    }
   }
 
   ngOnDestroy(): void {
     cancelAnimationFrame(this.rafId);
-    this.frameCapture = null;
+    this.stopExport();
   }
 
-  // ── Loop ────────────────────────────────────────────────────────────────────
+  // ── Loop ────────────────────────────────────────────────────────────────
 
   private startLoop(): void {
     // Runs entirely outside Angular's change-detection zone.
-    // Never call NgZone.run() from inside tick() — the loop is fire-and-forget.
     this.ngZone.runOutsideAngular(() => {
       const tick = () => {
         this.syncCanvasSize();
         this.drawFrame();
-        this.frameCapture?.();
         this.rafId = requestAnimationFrame(tick);
       };
       this.rafId = requestAnimationFrame(tick);
     });
   }
 
-  // Keep the canvas buffer resolution in sync with its CSS-rendered size,
-  // scaled by devicePixelRatio so text is crisp on HiDPI displays.
-  // Skipped during export — startExport() owns the buffer dimensions then.
-  // Resizing the buffer resets all context state, so ctx.scale() is re-applied here.
   private syncCanvasSize(): void {
-    if (this.isExporting()) return;
     const dpr = window.devicePixelRatio || 1;
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
+    const w   = this.canvas.clientWidth;
+    const h   = this.canvas.clientHeight;
     if (w > 0 && h > 0 && (this.canvasWidth !== w || this.canvasHeight !== h)) {
-      this.canvasWidth  = w;
-      this.canvasHeight = h;
+      this.canvasWidth   = w;
+      this.canvasHeight  = h;
       this.canvas.width  = Math.round(w * dpr);
       this.canvas.height = Math.round(h * dpr);
       this.ctx.scale(dpr, dpr);
     }
   }
 
-  // ── Render pipeline ─────────────────────────────────────────────────────────
+  // ── Render pipeline ─────────────────────────────────────────────────────
 
   private drawFrame(): void {
     const telemetry = this.telemetry();
     if (this.canvasWidth === 0 || this.canvasHeight === 0 || !telemetry) return;
 
-    // Reset decay state whenever a new file is loaded.
     if (telemetry !== this.activeTelemetry) {
       this.currentDisplayedGForce = 0;
-      this.peakGForce = 0;
-      this.activeTelemetry = telemetry;
+      this.peakGForce              = 0;
+      this.activeTelemetry         = telemetry;
     }
 
-    const ctx     = this.ctx;
-    const videoEl = this.videoEl();
+    const ctx      = this.ctx;
+    const videoEl  = this.videoEl();
     const duration    = videoEl.duration;
     const currentTime = videoEl.currentTime;
-    // ACCL timestamps are synthesised via a global cumulative counter (correct
-    // across STRM blocks) → use raw video-relative ms directly.
     const relativeTimeMs = currentTime * 1000;
 
-    if (this.exportBlackBg) {
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight);
-    } else {
-      ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
-    }
+    ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
 
-    // GPS speed: prefer locked samples (fix >= 2) with timestamp-based interpolation.
-    // GPS9 locked samples carry valid UTC-anchored .t values (video-relative ms).
-    // Fall back to progress-based indexing when no locked samples exist (GPS5 or
-    // no-fix GPS9 — both lack reliable timestamps).
+    // GPS speed: prefer locked samples (fix >= 2) with timestamp interpolation.
     const gps = telemetry.gps;
     let speed = 0;
     const lockedGPS = gps.filter(g => g.fix >= 2);
@@ -241,56 +238,56 @@ export class TelemetryOverlay implements OnDestroy {
       const alpha = fIdx - lo;
       speed = gps[lo].speed2d + (gps[hi].speed2d - gps[lo].speed2d) * alpha;
     }
+    this.lastSpeed = speed; // cached for ghost canvas export frames
 
     const acclAtom = this.math.findClosestAtom(telemetry.accl, relativeTimeMs);
     const rawG     = acclAtom ? this.math.calculateGForceMagnitude(acclAtom) : 0;
 
-    // ── Decay / ghost update ─────────────────────────────────────────────────
-    // Spike instantly on any impact above the threshold (rawG > current).
-    // For all other directions (drain, recovery below threshold), ease smoothly.
+    // Spike instantly on impact above the threshold; ease smoothly otherwise.
     if (rawG > SPIKE_THRESHOLD && rawG > this.currentDisplayedGForce) {
       this.currentDisplayedGForce = rawG;
     } else {
       this.currentDisplayedGForce += (rawG - this.currentDisplayedGForce) * EASE_FACTOR;
     }
 
-    // Peak rises instantly to match any new maximum; then drifts down at a fixed
-    // slow rate so the ghost marker persists well after the impact.
     if (rawG >= this.peakGForce) {
       this.peakGForce = rawG;
     } else {
       this.peakGForce = Math.max(this.peakGForce - PEAK_DECAY_PER_FRAME, 0);
     }
 
-    this.drawSpeedReadout(ctx, speed);
-    this.drawGForceBar(ctx, this.currentDisplayedGForce, this.peakGForce);
+    this.drawSpeedReadout(ctx, this.canvasWidth, this.canvasHeight, speed);
+    this.drawGForceBar(ctx, this.canvasWidth, this.canvasHeight, this.currentDisplayedGForce, this.peakGForce);
   }
 
-  // ── Bloom helper ─────────────────────────────────────────────────────────────
+  // ── Bloom helper ─────────────────────────────────────────────────────────
 
-  // Maps currentDisplayedGForce onto a { blur, color } pair consumed by all
-  // three drawing primitives. At 0 G: subtle cyan pulse. At MAX_G_SCALE: magenta
-  // explosion. All Canvas shadowBlur values flow through here.
   private bloomParams(): { blur: number; color: string } {
     const t = Math.min(this.currentDisplayedGForce / MAX_G_SCALE, 1);
     return {
-      blur:  6 + t * 42,           // 6 at rest → 48 at peak
+      blur:  6 + t * 42,
       color: t > 0.5 ? '#FF00FF' : '#00FFFF',
     };
   }
 
-  // ── Drawing primitives ───────────────────────────────────────────────────────
+  // ── Drawing primitives ───────────────────────────────────────────────────
+  // Both methods accept explicit width/height so they can be called against
+  // either the display canvas (canvasWidth/Height) or the ghost export canvas
+  // (EXPORT_W/EXPORT_H) without touching global state.
 
-  private drawSpeedReadout(ctx: CanvasRenderingContext2D, speedMs: number): void {
-    const height = this.canvasHeight;
-    // Round to nearest integer — eliminates sub-millisecond GPS interpolation jitter.
-    const kmh = Math.round(speedMs * 3.6);
+  private drawSpeedReadout(
+    ctx: CanvasRenderingContext2D,
+    _width: number,
+    height: number,
+    speedMs: number,
+  ): void {
+    const kmh     = Math.round(speedMs * 3.6);
     const bigPx   = Math.max(16, Math.round(height * 0.095));
     const smallPx = Math.max(10, Math.round(height * 0.042));
-    const font  = '"Consolas", "Courier New", monospace';
-    const x     = 24;
-    const yBig   = height - smallPx - 12;
-    const ySmall = height - 10;
+    const font    = '"Consolas", "Courier New", monospace';
+    const x       = 24;
+    const yBig    = height - smallPx - 12;
+    const ySmall  = height - 10;
 
     const { blur, color } = this.bloomParams();
 
@@ -298,8 +295,6 @@ export class TelemetryOverlay implements OnDestroy {
     ctx.font = `bold ${bigPx}px ${font}`;
 
     if (this.currentDisplayedGForce >= SEVERE_THRESHOLD) {
-      // Chromatic-aberration split: two offset copies (cyan left, magenta right)
-      // simulate camera shake on hard impact. Offset scales with excess G-force.
       const offset = Math.max(1, Math.round((this.currentDisplayedGForce - SEVERE_THRESHOLD) * 3));
       ctx.shadowBlur = blur;
 
@@ -311,7 +306,6 @@ export class TelemetryOverlay implements OnDestroy {
       ctx.fillStyle   = 'rgba(255, 0, 255, 0.75)';
       ctx.fillText(String(kmh), x + offset, yBig);
 
-      // White composite on top binds the two channels.
       ctx.shadowColor = '#FFFFFF';
       ctx.fillStyle   = '#FFFFFF';
       ctx.fillText(String(kmh), x, yBig);
@@ -333,13 +327,13 @@ export class TelemetryOverlay implements OnDestroy {
 
   private drawGForceBar(
     ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
     gForce: number,
     peak: number,
   ): void {
-    const width  = this.canvasWidth;
-    const height = this.canvasHeight;
     const fill     = Math.min(gForce / MAX_G_SCALE, 1);
-    const peakFill = Math.min(peak / MAX_G_SCALE, 1);
+    const peakFill = Math.min(peak  / MAX_G_SCALE, 1);
     const barW    = Math.round(width * 0.22);
     const barH    = 10;
     const x       = width - barW - 24;
@@ -349,7 +343,6 @@ export class TelemetryOverlay implements OnDestroy {
 
     const { blur, color } = this.bloomParams();
 
-    // Label — bloom intensity drives glow color and blur.
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle    = color;
     ctx.shadowColor  = color;
@@ -357,13 +350,11 @@ export class TelemetryOverlay implements OnDestroy {
     ctx.font = `${labelPx}px ${font}`;
     ctx.fillText(`${gForce.toFixed(2)} G`, x, barY - 8);
 
-    // Track outline
     ctx.shadowBlur  = 0;
     ctx.strokeStyle = '#FF00FF';
     ctx.lineWidth   = 1;
     ctx.strokeRect(x, barY, barW, barH);
 
-    // Fill — glow scales with bloom.
     if (fill > 0) {
       ctx.fillStyle   = color;
       ctx.shadowColor = color;
@@ -371,10 +362,8 @@ export class TelemetryOverlay implements OnDestroy {
       ctx.fillRect(x, barY, Math.round(barW * fill), barH);
     }
 
-    // Ghost peak marker: thin vertical line that lingers above the current fill,
-    // marking the maximum impact point while it slowly drifts toward zero.
     if (peakFill > fill && peak > 0.05) {
-      const markerX = x + Math.round(barW * peakFill);
+      const markerX   = x + Math.round(barW * peakFill);
       ctx.strokeStyle = '#FF00FF';
       ctx.shadowColor = '#FF00FF';
       ctx.shadowBlur  = blur * 0.6;
@@ -387,5 +376,4 @@ export class TelemetryOverlay implements OnDestroy {
 
     ctx.shadowBlur = 0;
   }
-
 }

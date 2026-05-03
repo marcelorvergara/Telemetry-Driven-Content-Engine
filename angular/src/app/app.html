@@ -1,79 +1,81 @@
-<main style="padding: 2rem; background: #000; color: #00ffff; font-family: monospace; min-height: 100vh;">
-  <h1 style="margin: 0 0 1.5rem; letter-spacing: 0.05em;">VERGARAVERSE</h1>
+<div class="app-shell">
 
-  <!-- File selection — triggers the full demux → WASM pipeline -->
-  <label style="display: inline-block; cursor: pointer; margin-bottom: 1rem;">
-    <input
-      type="file"
-      accept=".mp4,video/mp4"
-      style="display: none"
-      [disabled]="isProcessing()"
-      (change)="onFileSelected($event)">
-    <span style="
-      display: inline-block;
-      padding: 0.75rem 1.5rem;
-      background: {{ isProcessing() ? '#333' : '#ff00ff' }};
-      color: #fff;
-      border: none;
-      cursor: {{ isProcessing() ? 'not-allowed' : 'pointer' }};
-      letter-spacing: 0.1em;
-      font-family: monospace;
-      font-size: 0.9rem;">
-      {{ isProcessing() ? 'PARSING TELEMETRY...' : 'SELECT GOPRO MP4' }}
-    </span>
-  </label>
+  <!-- ── Header ──────────────────────────────────────────────────────── -->
+  <header class="app-header">
+    <span class="brand">VERGARAVERSE</span>
+    <div class="controls">
+
+      <label class="btn btn-file" [class.disabled]="isProcessing()">
+        <input
+          type="file"
+          accept=".mp4,video/mp4"
+          [disabled]="isProcessing()"
+          (change)="onFileSelected($event)">
+        {{ isProcessing() ? 'PARSING TELEMETRY...' : 'SELECT GOPRO MP4' }}
+      </label>
+
+      @if (telemetry()) {
+        <span class="btn btn-export"
+          [class.disabled]="overlay.isExporting()"
+          (click)="!overlay.isExporting() && overlay.startExport()">
+          {{ overlay.isExporting() ? 'EXPORTING...' : 'EXPORT OVERLAY (WEBM)' }}
+        </span>
+      }
+
+    </div>
+  </header>
 
   @if (pipelineError) {
-    <p style="color: #ff00ff; margin: 0.5rem 0 1rem; font-size: 0.85rem;">
-      &#9888; {{ pipelineError }}
-    </p>
+    <p class="error-msg">&#9888; {{ pipelineError }}</p>
   }
 
-  @if (telemetry()) {
-    <p style="color: #00ffff; margin: 0 0 1rem; font-size: 0.8rem; opacity: 0.7;">
-      GPS {{ telemetry()!.gps.length }} &nbsp;|&nbsp;
-      ACCL {{ telemetry()!.accl.length }} &nbsp;|&nbsp;
-      GRAV {{ telemetry()!.grav.length }}
-    </p>
-  }
+  <!-- ── 2-column content grid ───────────────────────────────────────── -->
+  <div class="content-grid">
 
-  <!--
-    #videoEl template reference on a native <video> resolves to HTMLVideoElement
-    and is passed directly to the overlay — no ViewChild or ElementRef needed.
-    The overlay's rAF loop reads videoEl.currentTime as its master clock.
-  -->
-  <div class="video-wrapper">
-    <video
-      #videoEl
-      [src]="videoSrc()"
-      controls
-      playsinline
-      style="display: block; width: 100%; max-width: 960px;">
-    </video>
+    <!-- Left: 16:9 video stage -->
+    <section class="video-stage">
+      @if (telemetry()) {
+        <p class="atom-counts">
+          GPS {{ telemetry()!.gps.length }} &nbsp;|&nbsp;
+          ACCL {{ telemetry()!.accl.length }} &nbsp;|&nbsp;
+          GRAV {{ telemetry()!.grav.length }}
+        </p>
+      }
+      <div class="video-wrapper">
+        <video
+          #videoEl
+          [src]="videoSrc()"
+          controls
+          playsinline
+          (timeupdate)="onTimeUpdate(videoEl)">
+        </video>
+        <app-telemetry-overlay
+          #overlay
+          [videoEl]="videoEl"
+          [telemetry]="telemetry()" />
+      </div>
+    </section>
 
-    <app-telemetry-overlay
-      #overlay
-      [videoEl]="videoEl"
-      [telemetry]="telemetry()" />
+    <!-- Right: live telemetry feed -->
+    <aside class="feed-panel">
+      <h2 class="panel-title">LIVE TELEMETRY FEED</h2>
+      <div class="feed-list">
+        @if (feedEntries().length === 0) {
+          <p class="feed-empty">Waiting for playback&hellip;</p>
+        }
+        @for (entry of feedEntries(); track entry.t) {
+          <div class="feed-entry">
+            <span class="feed-time">{{ formatTime(entry.t) }}</span>
+            <span class="feed-speed">{{ entry.speedKmh }}&nbsp;KM/H</span>
+            <span class="feed-g"
+              [class.spike]="entry.gForce > 1.5"
+              [class.severe]="entry.gForce > 3.0">
+              {{ entry.gForce.toFixed(2) }}&nbsp;G
+            </span>
+          </div>
+        }
+      </div>
+    </aside>
+
   </div>
-
-  @if (telemetry()) {
-    <label style="display: inline-block; cursor: pointer; margin-top: 1rem;">
-      <span
-        style="
-          display: inline-block;
-          padding: 0.75rem 1.5rem;
-          color: #000;
-          border: none;
-          letter-spacing: 0.1em;
-          font-family: monospace;
-          font-size: 0.9rem;"
-        [style.background]="overlay.isExporting() ? '#333' : '#00ffff'"
-        [style.cursor]="overlay.isExporting() ? 'not-allowed' : 'pointer'"
-        [style.color]="overlay.isExporting() ? '#888' : '#000'"
-        (click)="!overlay.isExporting() && overlay.startExport()">
-        {{ overlay.isExporting() ? 'EXPORTING...' : 'EXPORT OVERLAY (WEBM)' }}
-      </span>
-    </label>
-  }
-</main>
+</div>

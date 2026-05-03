@@ -1,10 +1,214 @@
+// Single source of truth for the Glitch palette. CSS variables cascade into
+// the feed panel and any future components without re-declaring hex values.
+:host {
+  --cyan:    #00ffff;
+  --magenta: #ff00ff;
+  --bg:      #000000;
+  --dim:     rgba(0, 255, 255, 0.10);
+  display: block;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+// ── Page shell ────────────────────────────────────────────────────────────
+// height + overflow: hidden hard-clip the dashboard to the viewport.
+// grid-template-rows: auto auto 1fr gives header and optional error their
+// natural height; the content grid takes whatever is left.
+
+.app-shell {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--cyan);
+  font-family: 'Consolas', 'Courier New', monospace;
+  padding: 1.25rem 1.5rem;
+  gap: 0.75rem;
+}
+
+// ── Header ────────────────────────────────────────────────────────────────
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--magenta);
+  padding-bottom: 0.75rem;
+}
+
+.brand {
+  font-size: 1.3rem;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 10px var(--cyan);
+}
+
+.controls {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.55rem 1.2rem;
+  letter-spacing: 0.1em;
+  font-family: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  border: none;
+  user-select: none;
+
+  &.disabled {
+    background: #333 !important;
+    color: #666 !important;
+    cursor: not-allowed;
+  }
+}
+
+.btn-file {
+  background: var(--magenta);
+  color: #000;
+
+  input[type='file'] { display: none; }
+}
+
+.btn-export {
+  background: var(--cyan);
+  color: #000;
+}
+
+// ── Error ─────────────────────────────────────────────────────────────────
+
+.error-msg {
+  color: var(--magenta);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+// ── 2-column content grid ─────────────────────────────────────────────────
+// height: 100% + min-height: 0 are both required: height makes the grid item
+// fill the 1fr row; min-height: 0 overrides the default 'auto' floor that
+// would let it grow past the row boundary and cause overflow.
+
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 1.25rem;
+  align-items: start;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+
+  @media (max-width: 700px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// ── Video stage ───────────────────────────────────────────────────────────
+// flex column so atom-counts takes its natural height and video-wrapper
+// absorbs the rest via flex: 1.
+
+.video-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  height: 100%;
+  min-height: 0;
+}
+
+.atom-counts {
+  font-size: 0.72rem;
+  opacity: 0.55;
+  margin: 0;
+  flex-shrink: 0;
+}
+
 .video-wrapper {
   position: relative;
-  display: inline-block;
-  line-height: 0; // collapse whitespace gap between video and overlay host
+  flex: 1;          // absorb remaining height after atom-counts
+  min-height: 0;    // allow the flex item to shrink below its content size
+  line-height: 0;
+  border: 1px solid var(--magenta);
+  box-shadow: 0 0 18px rgba(255, 0, 255, 0.18);
+  overflow: hidden;
 
   video {
     display: block;
-    max-width: 100%;
+    width: 100%;
+    height: 100%;
+    object-fit: contain; // letterbox inside the wrapper; controls stay visible
   }
+}
+
+// ── Live telemetry feed panel ─────────────────────────────────────────────
+// height: 100% + min-height: 0 mirror the video-stage constraints so the
+// panel fills its grid column without pushing past the viewport.
+
+.feed-panel {
+  border: 1px solid var(--cyan);
+  box-shadow: 0 0 12px rgba(0, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.panel-title {
+  font-size: 0.72rem;
+  font-weight: normal;
+  letter-spacing: 0.14em;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--cyan);
+  text-shadow: 0 0 8px var(--cyan);
+  flex-shrink: 0;
+}
+
+// flex: 1 + overflow-y: auto: panel-title is pinned, feed text scrolls.
+.feed-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.4rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.feed-empty {
+  font-size: 0.72rem;
+  opacity: 0.35;
+  text-align: center;
+  padding: 1.5rem 0;
+  margin: 0;
+}
+
+// Each entry: time | speed | G-force — 3-column micro-grid for alignment.
+.feed-entry {
+  display: grid;
+  grid-template-columns: 52px 1fr 1fr;
+  gap: 0.4rem;
+  font-size: 0.76rem;
+  padding: 0.28rem 0.35rem;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.08);
+  flex-shrink: 0;
+
+  &:first-child {
+    background: var(--dim);
+    border-color: rgba(0, 255, 255, 0.28);
+  }
+}
+
+.feed-time  { opacity: 0.4; }
+.feed-speed { color: var(--cyan); }
+
+.feed-g {
+  color: var(--cyan);
+  text-align: right;
+
+  &.spike  { color: #ffff00; }
+  &.severe { color: var(--magenta); text-shadow: 0 0 4px var(--magenta); }
 }
