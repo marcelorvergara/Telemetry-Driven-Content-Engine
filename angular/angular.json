@@ -25,10 +25,12 @@
             "tsConfig": "tsconfig.app.json",
             "inlineStyleLanguage": "scss",
             "assets": [
+              "src/favicon.png",
+              "src/assets",
               {
                 "glob": "**/*",
                 "input": "public"
-              },
+              },              
               {
                 "glob": "gpmf.wasm",
                 "input": "../go-wasm",
