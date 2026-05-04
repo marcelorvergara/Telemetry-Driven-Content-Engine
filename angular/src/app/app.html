@@ -22,6 +22,17 @@
         </span>
       }
 
+      <div class="theme-switcher">
+        @for (theme of allThemes; track theme.id) {
+          <button
+            class="theme-btn"
+            [class.active]="themeService.currentTheme().id === theme.id"
+            (click)="themeService.setTheme(theme)">
+            {{ theme.id.split('-').pop()!.toUpperCase() }}
+          </button>
+        }
+      </div>
+
     </div>
   </header>
 

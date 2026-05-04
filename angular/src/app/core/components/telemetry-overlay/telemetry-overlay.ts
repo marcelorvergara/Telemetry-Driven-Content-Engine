@@ -11,6 +11,8 @@ import {
 } from '@angular/core';
 import { TelemetryResult } from '../../models/telemetry.model';
 import { TelemetryMathService } from '../../services/telemetry-math';
+import { ThemeService } from '../../services/theme.service';
+import { ThemeConfig } from '../../models/theme.model';
 
 // G-force thresholds for visual state transitions.
 const SPIKE_THRESHOLD  = 1.5;
@@ -26,6 +28,12 @@ const PEAK_DECAY_PER_FRAME = 0.003;
 const EXPORT_W = 1920;
 const EXPORT_H = 1080;
 
+interface LayoutAnchors {
+  speedX: number;
+  gfBarX: number;
+  gfBarY: number;
+}
+
 @Component({
   selector: 'app-telemetry-overlay',
   imports: [],
@@ -36,9 +44,10 @@ export class TelemetryOverlay implements OnDestroy {
   readonly videoEl   = input.required<HTMLVideoElement>();
   readonly telemetry = input<TelemetryResult | null>(null);
 
-  private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
-  private readonly ngZone    = inject(NgZone);
-  private readonly math      = inject(TelemetryMathService);
+  private readonly canvasRef    = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
+  private readonly ngZone       = inject(NgZone);
+  private readonly math         = inject(TelemetryMathService);
+  private readonly themeService = inject(ThemeService);
 
   readonly isExporting = signal<boolean>(false);
 
@@ -137,11 +146,14 @@ export class TelemetryOverlay implements OnDestroy {
     const onFrame = (_now: DOMHighResTimeStamp, _meta: unknown): void => {
       if (!this.isExporting()) return;
 
+      const theme   = this.themeService.currentTheme();
+      const anchors = this.resolveLayout(theme.layout, EXPORT_W, EXPORT_H);
+
       // Black background so the gauges are visible on Screen blend mode.
       ghostCtx.fillStyle = '#000000';
       ghostCtx.fillRect(0, 0, EXPORT_W, EXPORT_H);
-      this.drawSpeedReadout(ghostCtx, EXPORT_W, EXPORT_H, this.lastSpeed);
-      this.drawGForceBar(ghostCtx, EXPORT_W, EXPORT_H, this.currentDisplayedGForce, this.peakGForce);
+      this.drawSpeedReadout(ghostCtx, EXPORT_W, EXPORT_H, this.lastSpeed, theme, anchors);
+      this.drawGForceBar(ghostCtx, EXPORT_W, EXPORT_H, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (videoEl as any).requestVideoFrameCallback(onFrame);
@@ -217,10 +229,12 @@ export class TelemetryOverlay implements OnDestroy {
       this.activeTelemetry         = telemetry;
     }
 
-    const ctx      = this.ctx;
-    const videoEl  = this.videoEl();
-    const duration    = videoEl.duration;
-    const currentTime = videoEl.currentTime;
+    const theme  = this.themeService.currentTheme();
+    const nowMs  = performance.now();
+    const ctx     = this.ctx;
+    const videoEl = this.videoEl();
+    const duration       = videoEl.duration;
+    const currentTime    = videoEl.currentTime;
     const relativeTimeMs = currentTime * 1000;
 
     ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
@@ -230,7 +244,7 @@ export class TelemetryOverlay implements OnDestroy {
     let speed = 0;
     const lockedGPS = gps.filter(g => g.fix >= 2);
     if (lockedGPS.length > 0) {
-      speed = this.math.interpolateSpeed(lockedGPS, relativeTimeMs);
+      speed = this.math.getDisplaySpeed(lockedGPS, relativeTimeMs, nowMs);
     } else if (gps.length > 0 && isFinite(duration) && duration > 0) {
       const fIdx  = Math.max(0, Math.min(1, currentTime / duration)) * (gps.length - 1);
       const lo    = Math.floor(fIdx);
@@ -241,7 +255,7 @@ export class TelemetryOverlay implements OnDestroy {
     this.lastSpeed = speed; // cached for ghost canvas export frames
 
     const acclAtom = this.math.findClosestAtom(telemetry.accl, relativeTimeMs);
-    const rawG     = acclAtom ? this.math.calculateGForceMagnitude(acclAtom) : 0;
+    const rawG     = this.math.getDisplayGForce(acclAtom, nowMs);
 
     // Spike instantly on impact above the threshold; ease smoothly otherwise.
     if (rawG > SPIKE_THRESHOLD && rawG > this.currentDisplayedGForce) {
@@ -256,18 +270,79 @@ export class TelemetryOverlay implements OnDestroy {
       this.peakGForce = Math.max(this.peakGForce - PEAK_DECAY_PER_FRAME, 0);
     }
 
-    this.drawSpeedReadout(ctx, this.canvasWidth, this.canvasHeight, speed);
-    this.drawGForceBar(ctx, this.canvasWidth, this.canvasHeight, this.currentDisplayedGForce, this.peakGForce);
+    const anchors = this.resolveLayout(theme.layout, this.canvasWidth, this.canvasHeight);
+    this.drawSpeedReadout(ctx, this.canvasWidth, this.canvasHeight, speed, theme, anchors);
+    this.drawGForceBar(ctx, this.canvasWidth, this.canvasHeight, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
+  }
+
+  // ── Layout ───────────────────────────────────────────────────────────────
+  // Returns pixel anchors for the two HUD elements. All three cases share the
+  // same draw methods — only the origin coordinates differ per layout.
+
+  private resolveLayout(
+    layout: 'spread' | 'stacked' | 'dashboard' | 'tiktok-cover',
+    width: number,
+    height: number,
+  ): LayoutAnchors {
+    const barW = Math.round(width * 0.22);
+    const barH = 10;
+    switch (layout) {
+      case 'stacked':
+        // Both elements left-aligned; G-bar sits above the speed digits.
+        return {
+          speedX: 24,
+          gfBarX: 24,
+          gfBarY: Math.round(height * 0.75),
+        };
+      case 'dashboard':
+        // Speed left-of-centre, G-bar right-of-centre — paired mid-bottom.
+        return {
+          speedX: Math.round(width / 2) - 40,
+          gfBarX: Math.round(width / 2) + 10,
+          gfBarY: height - barH - 4,
+        };
+      case 'tiktok-cover': {
+        // Solid-block layout: speed box stacked above G-force box, bottom-left.
+        // gfBarY marks the top of the G-force box; speed box sits immediately above.
+        const stripeW = 8;
+        const margin  = 16;
+        const gap     = 4;
+        return {
+          speedX: margin + stripeW + gap,
+          gfBarX: margin + stripeW + gap,
+          gfBarY: Math.round(height * 0.80),
+        };
+      }
+      case 'spread':
+      default:
+        // Current behaviour: speed bottom-left, G-bar bottom-right.
+        return {
+          speedX: 24,
+          gfBarX: width - barW - 24,
+          gfBarY: height - barH - 4,
+        };
+    }
   }
 
   // ── Bloom helper ─────────────────────────────────────────────────────────
 
-  private bloomParams(): { blur: number; color: string } {
+  private bloomParams(theme: ThemeConfig): { blur: number; color: string } {
     const t = Math.min(this.currentDisplayedGForce / MAX_G_SCALE, 1);
     return {
       blur:  6 + t * 42,
-      color: t > 0.5 ? '#FF00FF' : '#00FFFF',
+      color: t > 0.5 ? theme.colors.secondary : theme.colors.primary,
     };
+  }
+
+  // ── Hex → rgba helper ────────────────────────────────────────────────────
+  // Used for the translucent chromatic-aberration ghost copies in the severe
+  // G-force glitch effect. Assumes 6-digit hex with leading '#'.
+
+  private hexToRgba(hex: string, alpha: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
 
   // ── Drawing primitives ───────────────────────────────────────────────────
@@ -277,49 +352,85 @@ export class TelemetryOverlay implements OnDestroy {
 
   private drawSpeedReadout(
     ctx: CanvasRenderingContext2D,
-    _width: number,
+    width: number,
     height: number,
     speedMs: number,
+    theme: ThemeConfig,
+    anchors: LayoutAnchors,
   ): void {
-    const kmh     = Math.round(speedMs * 3.6);
+    const kmh = Math.round(speedMs * 3.6);
+
+    if (theme.layout === 'tiktok-cover') {
+      const stripeW   = 8;
+      const margin    = 16;
+      const speedBoxH = Math.round(height * 0.09);
+      const gfBoxH    = Math.round(height * 0.055);
+      const boxW      = Math.round(width * 0.18);
+      const boxLeft   = anchors.speedX;
+      const speedBoxY = anchors.gfBarY - speedBoxH;
+
+      // Speed box — solid primary colour fill
+      ctx.fillStyle = theme.colors.primary;
+      ctx.fillRect(boxLeft, speedBoxY, boxW, speedBoxH);
+
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle    = '#FFFFFF';
+
+      ctx.font = `bold ${Math.max(14, Math.round(speedBoxH * 0.52))}px ${theme.font.primary}`;
+      ctx.fillText(String(kmh), boxLeft + 10, speedBoxY + speedBoxH * 0.42);
+
+      ctx.font = `${Math.max(8, Math.round(speedBoxH * 0.28))}px ${theme.font.primary}`;
+      ctx.fillText('KM/H', boxLeft + 10, speedBoxY + speedBoxH * 0.80);
+
+      // Three-colour branding stripe at the left edge of the combined block
+      const totalH  = speedBoxH + gfBoxH;
+      const stripeH = Math.floor(totalH / 3);
+      [theme.colors.secondary, theme.colors.success, theme.colors.warning].forEach((c, i) => {
+        ctx.fillStyle = c;
+        ctx.fillRect(margin, speedBoxY + i * stripeH, stripeW, stripeH);
+      });
+
+      ctx.shadowBlur = 0;
+      return;
+    }
+
     const bigPx   = Math.max(16, Math.round(height * 0.095));
     const smallPx = Math.max(10, Math.round(height * 0.042));
-    const font    = '"Consolas", "Courier New", monospace';
-    const x       = 24;
+    const x       = anchors.speedX;
     const yBig    = height - smallPx - 12;
     const ySmall  = height - 10;
 
-    const { blur, color } = this.bloomParams();
+    const { blur, color } = this.bloomParams(theme);
 
     ctx.textBaseline = 'alphabetic';
-    ctx.font = `bold ${bigPx}px ${font}`;
+    ctx.font = `bold ${bigPx}px ${theme.font.primary}`;
 
     if (this.currentDisplayedGForce >= SEVERE_THRESHOLD) {
       const offset = Math.max(1, Math.round((this.currentDisplayedGForce - SEVERE_THRESHOLD) * 3));
       ctx.shadowBlur = blur;
 
-      ctx.shadowColor = '#00FFFF';
-      ctx.fillStyle   = 'rgba(0, 255, 255, 0.75)';
+      ctx.shadowColor = theme.colors.primary;
+      ctx.fillStyle   = this.hexToRgba(theme.colors.primary, 0.75);
       ctx.fillText(String(kmh), x - offset, yBig);
 
-      ctx.shadowColor = '#FF00FF';
-      ctx.fillStyle   = 'rgba(255, 0, 255, 0.75)';
+      ctx.shadowColor = theme.colors.secondary;
+      ctx.fillStyle   = this.hexToRgba(theme.colors.secondary, 0.75);
       ctx.fillText(String(kmh), x + offset, yBig);
 
-      ctx.shadowColor = '#FFFFFF';
-      ctx.fillStyle   = '#FFFFFF';
+      ctx.shadowColor = theme.colors.text;
+      ctx.fillStyle   = theme.colors.text;
       ctx.fillText(String(kmh), x, yBig);
     } else {
       ctx.shadowColor = color;
       ctx.shadowBlur  = blur;
-      ctx.fillStyle   = '#00FFFF';
+      ctx.fillStyle   = theme.colors.primary;
       ctx.fillText(String(kmh), x, yBig);
     }
 
-    ctx.font        = `${smallPx}px ${font}`;
-    ctx.shadowColor = '#00FFFF';
+    ctx.font        = `${smallPx}px ${theme.font.primary}`;
+    ctx.shadowColor = theme.colors.primary;
     ctx.shadowBlur  = Math.min(blur * 0.4, 10);
-    ctx.fillStyle   = '#00FFFF';
+    ctx.fillStyle   = theme.colors.primary;
     ctx.fillText('KM/H', x, ySmall);
 
     ctx.shadowBlur = 0;
@@ -331,27 +442,48 @@ export class TelemetryOverlay implements OnDestroy {
     height: number,
     gForce: number,
     peak: number,
+    theme: ThemeConfig,
+    anchors: LayoutAnchors,
   ): void {
+    if (theme.layout === 'tiktok-cover') {
+      const gfBoxH  = Math.round(height * 0.055);
+      const boxW    = Math.round(width * 0.18);
+      const boxLeft = anchors.gfBarX;
+      const gfBoxY  = anchors.gfBarY;
+
+      // G-force box — solid black fill
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(boxLeft, gfBoxY, boxW, gfBoxH);
+
+      const labelPx = Math.max(8, Math.round(gfBoxH * 0.55));
+      ctx.font         = `${labelPx}px ${theme.font.primary}`;
+      ctx.fillStyle    = '#FFFFFF';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${gForce.toFixed(2)} G`, boxLeft + 10, gfBoxY + gfBoxH * 0.5);
+
+      ctx.shadowBlur = 0;
+      return;
+    }
+
     const fill     = Math.min(gForce / MAX_G_SCALE, 1);
     const peakFill = Math.min(peak  / MAX_G_SCALE, 1);
     const barW    = Math.round(width * 0.22);
     const barH    = 10;
-    const x       = width - barW - 24;
-    const barY    = height - barH - 4;
+    const x       = anchors.gfBarX;
+    const barY    = anchors.gfBarY;
     const labelPx = Math.max(10, Math.round(height * 0.038));
-    const font    = '"Consolas", "Courier New", monospace';
 
-    const { blur, color } = this.bloomParams();
+    const { blur, color } = this.bloomParams(theme);
 
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle    = color;
     ctx.shadowColor  = color;
     ctx.shadowBlur   = blur;
-    ctx.font = `${labelPx}px ${font}`;
+    ctx.font = `${labelPx}px ${theme.font.primary}`;
     ctx.fillText(`${gForce.toFixed(2)} G`, x, barY - 8);
 
     ctx.shadowBlur  = 0;
-    ctx.strokeStyle = '#FF00FF';
+    ctx.strokeStyle = theme.colors.secondary;
     ctx.lineWidth   = 1;
     ctx.strokeRect(x, barY, barW, barH);
 
@@ -364,8 +496,8 @@ export class TelemetryOverlay implements OnDestroy {
 
     if (peakFill > fill && peak > 0.05) {
       const markerX   = x + Math.round(barW * peakFill);
-      ctx.strokeStyle = '#FF00FF';
-      ctx.shadowColor = '#FF00FF';
+      ctx.strokeStyle = theme.colors.secondary;
+      ctx.shadowColor = theme.colors.secondary;
       ctx.shadowBlur  = blur * 0.6;
       ctx.lineWidth   = 2;
       ctx.beginPath();

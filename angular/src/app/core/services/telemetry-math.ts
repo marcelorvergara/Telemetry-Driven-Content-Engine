@@ -1,11 +1,20 @@
 import { Injectable } from '@angular/core';
 import { ACCLSample, GPS9Sample, GRAVSample } from '../models/telemetry.model';
+import { ThemeService } from './theme.service';
 
 const G = 9.81;
 const RAD_TO_DEG = 180 / Math.PI;
+const MAX_HOLD_MS = 1500;
 
 @Injectable({ providedIn: 'root' })
 export class TelemetryMathService {
+
+  private _lastSpeedUpdateTime = 0;
+  private _lastSpeedValue      = 0;
+  private _gPeakValue          = 0;
+  private _gPeakHeldUntil      = 0;
+
+  constructor(private readonly themeService: ThemeService) {}
 
   // Lower-bound binary search: returns the atom with the largest .t ≤ targetTimeMs.
   // Called inside a 60 Hz rAF loop so must not allocate. Returns the first atom when
@@ -96,5 +105,48 @@ export class TelemetryMathService {
     const prevSpeed = useSpeed3d ? prev.speed3d : prev.speed2d;
     const nextSpeed = useSpeed3d ? next.speed3d : next.speed2d;
     return prevSpeed + (nextSpeed - prevSpeed) * alpha;
+  }
+
+  // Theme-aware speed for display. When speedUpdateIntervalMs === 0 the result is
+  // instantaneous; when > 0 the output is frozen until the interval elapses.
+  // nowMs must be performance.now() at frame time — the caller owns the clock.
+  getDisplaySpeed(
+    gps: GPS9Sample[],
+    targetTimeMs: number,
+    nowMs: number,
+    useSpeed3d = false,
+  ): number {
+    const intervalMs = this.themeService.currentTheme().speedUpdateIntervalMs;
+    if (intervalMs === 0) {
+      return this.interpolateSpeed(gps, targetTimeMs, useSpeed3d);
+    }
+    if (nowMs - this._lastSpeedUpdateTime >= intervalMs) {
+      this._lastSpeedValue      = this.interpolateSpeed(gps, targetTimeMs, useSpeed3d);
+      this._lastSpeedUpdateTime = nowMs;
+    }
+    return this._lastSpeedValue;
+  }
+
+  // Theme-aware G-force for display. 'instant' passes through directly; 'max-hold'
+  // latches the peak for MAX_HOLD_MS then snaps back to the instantaneous value.
+  // nowMs must be performance.now() at frame time — the caller owns the clock.
+  getDisplayGForce(accl: ACCLSample | null, nowMs: number): number {
+    if (!accl) return 0;
+    const instantG = this.calculateGForceMagnitude(accl);
+    if (this.themeService.currentTheme().gForceBehavior === 'instant') {
+      return instantG;
+    }
+    // max-hold: a new peak resets and extends the hold window
+    if (instantG >= this._gPeakValue) {
+      this._gPeakValue     = instantG;
+      this._gPeakHeldUntil = nowMs + MAX_HOLD_MS;
+    }
+    if (nowMs < this._gPeakHeldUntil) {
+      return this._gPeakValue;
+    }
+    // Hold expired — snap back and reset
+    this._gPeakValue     = instantG;
+    this._gPeakHeldUntil = 0;
+    return instantG;
   }
 }

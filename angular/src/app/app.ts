@@ -7,6 +7,8 @@ import { TelemetryMathService } from './core/services/telemetry-math';
 import { ClipApiService, buildClipRequest } from './core/services/clip-api.service';
 import { TelemetryVaultService } from './core/services/telemetry-vault.service';
 import { TelemetryOverlay } from './core/components/telemetry-overlay/telemetry-overlay';
+import { ThemeService } from './core/services/theme.service';
+import { ALL_THEMES } from './core/models/theme.model';
 
 interface FeedEntry {
   t: number;        // ms from video start
@@ -29,14 +31,17 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly library      = signal<ClipMetadataDto[]>([]);
   pipelineError: string | null = null;
 
+  readonly allThemes = ALL_THEMES;
+
   private objectUrl: string | null = null;
 
   constructor(
-    private readonly demuxer:  Mp4DemuxerService,
-    private readonly parser:   GpmfParserService,
-    private readonly math:     TelemetryMathService,
-    private readonly clipApi:  ClipApiService,
-    private readonly vault:    TelemetryVaultService,
+    private readonly demuxer:      Mp4DemuxerService,
+    private readonly parser:       GpmfParserService,
+    private readonly math:         TelemetryMathService,
+    private readonly clipApi:      ClipApiService,
+    private readonly vault:        TelemetryVaultService,
+    readonly         themeService: ThemeService,
   ) {}
 
   // Load the Library from PostgreSQL on app start. Failure is non-fatal —

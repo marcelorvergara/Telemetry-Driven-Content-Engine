@@ -80,6 +80,35 @@
   color: #000;
 }
 
+.theme-switcher {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.theme-btn {
+  padding: 0.4rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid rgba(0, 255, 255, 0.25);
+  color: rgba(0, 255, 255, 0.45);
+  user-select: none;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+
+  &.active {
+    background: var(--cyan);
+    border-color: var(--cyan);
+    color: #000;
+  }
+
+  &:hover:not(.active) {
+    border-color: var(--cyan);
+    color: var(--cyan);
+  }
+}
+
 // ── Error ─────────────────────────────────────────────────────────────────
 
 .error-msg {
