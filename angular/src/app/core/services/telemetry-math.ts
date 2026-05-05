@@ -5,6 +5,8 @@ import { ThemeService } from './theme.service';
 const G = 9.81;
 const RAD_TO_DEG = 180 / Math.PI;
 const MAX_HOLD_MS = 1500;
+// GPS multipath error floor: readings below this are indistinguishable from drift.
+const SPEED_FLOOR_MS = 8.0 / 3.6;
 
 @Injectable({ providedIn: 'root' })
 export class TelemetryMathService {
@@ -46,7 +48,8 @@ export class TelemetryMathService {
   // (hard braking ↓ and hard impact ↑) as a single unsigned G-force reading.
   calculateGForceMagnitude(accl: ACCLSample): number {
     const magnitude = Math.sqrt(accl.x ** 2 + accl.y ** 2 + accl.z ** 2);
-    return Math.abs(magnitude - G) / G;
+    const g = Math.abs(magnitude - G) / G;
+    return g < 0.25 ? 0 : g;
   }
 
   // Lean/tilt angle in degrees, preferring the GRAV unit vector.
@@ -75,7 +78,10 @@ export class TelemetryMathService {
     useSpeed3d = false,
   ): number {
     if (gps.length === 0) return 0;
-    if (gps.length === 1) return useSpeed3d ? gps[0].speed3d : gps[0].speed2d;
+    if (gps.length === 1) {
+      const s = useSpeed3d ? gps[0].speed3d : gps[0].speed2d;
+      return s < SPEED_FLOOR_MS ? 0 : s;
+    }
 
     // Inline lower-bound search — avoids the function-call overhead of
     // findClosestAtom in this hot-path method.
@@ -94,17 +100,24 @@ export class TelemetryMathService {
     }
 
     const prev = gps[lo];
-    if (lo >= gps.length - 1) return useSpeed3d ? prev.speed3d : prev.speed2d;
+    if (lo >= gps.length - 1) {
+      const s = useSpeed3d ? prev.speed3d : prev.speed2d;
+      return s < SPEED_FLOOR_MS ? 0 : s;
+    }
     const next = gps[lo + 1];
 
     const dt = next.t - prev.t;
-    if (dt === 0) return useSpeed3d ? prev.speed3d : prev.speed2d;
+    if (dt === 0) {
+      const s = useSpeed3d ? prev.speed3d : prev.speed2d;
+      return s < SPEED_FLOOR_MS ? 0 : s;
+    }
 
     // Clamp alpha to [0, 1]: prevents extrapolation if target drifts outside the bracket.
     const alpha = Math.max(0, Math.min(1, (targetTimeMs - prev.t) / dt));
     const prevSpeed = useSpeed3d ? prev.speed3d : prev.speed2d;
     const nextSpeed = useSpeed3d ? next.speed3d : next.speed2d;
-    return prevSpeed + (nextSpeed - prevSpeed) * alpha;
+    const speed = prevSpeed + (nextSpeed - prevSpeed) * alpha;
+    return speed < SPEED_FLOOR_MS ? 0 : speed;
   }
 
   // Theme-aware speed for display. When speedUpdateIntervalMs === 0 the result is
