@@ -64,6 +64,18 @@ The parser is responsible for dividing every raw integer by its SCAL factor and 
 
 No business logic inside the Go parser. If it requires knowledge of video aesthetics, display state, or application features, it belongs in Angular.
 
+### Unit Data Contract
+
+Every layer in the pipeline must pass values in **base physical units** to its downstream consumer. Unit conversion for human readability is the exclusive responsibility of the Canvas presentation layer (`telemetry-overlay.ts`).
+
+| Layer | Responsibility | Forbidden |
+|---|---|---|
+| Go-WASM parser | Emit post-SCAL floats: m/s, m/s², degrees, metres | Raw integer counts; pre-converted km/h or G |
+| `TelemetryMathService` | Derive G-force magnitude (G units), lean angle (degrees), interpolated speed (m/s) | `× 3.6` km/h conversion; display rounding |
+| `telemetry-overlay.ts` | `Math.round(speedMs * 3.6)` before `fillText`; `gForce.toFixed(2)` before `fillText` | Reading raw sensor integers; re-deriving physical values |
+
+Violating this contract is silent at compile time. A value that looks plausible in isolation (e.g. `2.0`) can mean m/s or km/h depending on which layer produced it; the discrepancy only surfaces visually as an order-of-magnitude display error (e.g. showing "2 KM/H" instead of "7 KM/H").
+
 ### Sensor scope (MVP)
 
 | Sensor | Tag | Status |
@@ -225,3 +237,34 @@ Do not switch this to an Observable or an `effect()`. The synchronous read insid
 **The `tiktok-cover` constraint**: this layout never sets `shadowBlur > 0`. Any modification that introduces bloom or glow into the `tiktok-cover` branch violates the flat-aesthetic contract. The three-colour branding stripe (secondary / success / warning) is drawn in `drawSpeedReadout` because it spans the combined block height of both boxes — do not move it to `drawGForceBar`.
 
 **Context-leak guard**: every layout branch must end with `ctx.shadowBlur = 0` before returning. Canvas context state is persistent across frames; failing to reset it produces cumulative visual corruption that is invisible in single-frame screenshots but compounds over time.
+
+---
+
+## Hardware Realities & Sensor Deadzones
+
+GoPro sensors are consumer-grade MEMS hardware. Even at standstill they produce non-zero readings. The thresholds below were established empirically in this recording environment and are enforced inside `TelemetryMathService`. **Do not remove or lower them** — they silence hardware noise, not real events.
+
+### MEMS Accelerometer Drift
+
+The ACCL sensor has thermal noise and micro-vibration pickup that produces a constant G-force deviation from the 1G baseline even when the camera is physically stationary. Readings below **0.25 G** are indistinguishable from sensor noise in this environment.
+
+```typescript
+// calculateGForceMagnitude — telemetry-math.ts
+const g = Math.abs(magnitude - G) / G;
+return g < 0.25 ? 0 : g;   // ← never lower this threshold
+```
+
+### GPS Multipath Drift
+
+Stationary GPS receivers report non-zero speed because satellite signals reflect off buildings and terrain (multipath interference). In this environment, multipath drift peaks at approximately 7 km/h. The speed floor is set at **8.0 km/h (≈ 2.22 m/s)** to absorb the full drift envelope.
+
+```typescript
+// telemetry-math.ts module constant
+const SPEED_FLOOR_MS = 8.0 / 3.6;   // ← never lower this threshold
+```
+
+This constant is applied at **all four return paths** in `interpolateSpeed` (single sample, past-end clamp, zero-dt guard, and the interpolated result). Any refactor that adds a new return path must apply the same floor.
+
+### Why These Are Not Tunable Per-Theme
+
+The noise floors are hardware facts, not display preferences. They belong in `TelemetryMathService` as module-level constants, not in `ThemeConfig`. A theme change must never affect whether a ghost reading is suppressed.
