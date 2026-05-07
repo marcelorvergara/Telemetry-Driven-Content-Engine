@@ -1,5 +1,22 @@
 # Map Feature Architecture — Sprint 6
 
+## Ghost Vector Map Rule
+
+The native Canvas vector map (`drawVectorMap()` in `telemetry-overlay.ts`) is the **sole map implementation** for this project. It handles both the live HUD and the WebM export from one code path.
+
+**DOM-based map libraries are permanently decommissioned.** The reasons are structural, not aesthetic:
+
+| Concern | DOM map (Leaflet / Mapbox) | Ghost Vector Map |
+|---|---|---|
+| WebM export | Requires `ctx.drawImage()` with tiles → CORS canvas taint → black frames | Native `ctx.lineTo()` — no external fetch, no taint |
+| JS heap | Tile cache + library runtime competes with the 64 MB WASM budget | Zero allocation beyond the GPS array already in memory |
+| Render path | Two separate systems (DOM + Canvas) must be kept in sync | Single Canvas draw call, same frame, same clock |
+| Aesthetic | Tile style is fixed by the provider | Full control via `ThemeConfig` colours and stroke width |
+
+**Any future spatial feature must extend `drawVectorMap()`**, not introduce a new DOM-based library.
+
+---
+
 Rules governing the dual-layer map system: a Leaflet DOM overlay for interactive live viewing and a Canvas vector renderer for export-safe WebM recording.
 
 ---

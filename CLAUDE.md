@@ -84,6 +84,14 @@ getResultPtr() uint32
 getResultLen() uint32
 ```
 
+### Canvas Rendering — Ghost Vector Map Rule
+
+**DOM-based map libraries (Leaflet, Mapbox, Google Maps) are permanently forbidden** in this project.
+
+- All spatial routing must be rendered via native Canvas 2D primitives (`ctx.lineTo`, `ctx.arc`, `ctx.fillRect`) by projecting lat/lon into pixel space mathematically. See [Map Feature](Docs/architecture/map-feature.md) for the projection formula.
+- `MediaRecorder` captures frames from `canvas.captureStream()` — DOM elements are invisible to it. Getting a DOM map into the WebM export would require `ctx.drawImage()` with tile images. This marks the canvas **origin-dirty**, causing `captureStream()` to emit opaque-black frames with no thrown exception.
+- The Canvas vector path is the single implementation for both the live HUD and the WebM export. No dual-layer, no synchronisation overhead, no tile cache competing against the 64 MB JS heap.
+
 ### Sensor Noise Floors — Do Not Lower
 - **ACCL deadzone**: readings < **0.25 G** are indistinguishable from MEMS noise. Set in `calculateGForceMagnitude`.
 - **GPS speed floor**: `SPEED_FLOOR_MS = 8.0 / 3.6` (~2.22 m/s). Applied at all 4 return paths in `interpolateSpeed`.

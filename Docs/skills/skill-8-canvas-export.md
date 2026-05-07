@@ -16,6 +16,18 @@
 
 ---
 
+## Verification Step — Cross-Origin Tile Check
+
+Before committing any visual enhancement, verify that no external image assets or cross-origin tiles are being drawn to the Canvas:
+
+1. Search the diff for `ctx.drawImage` — any call must be reviewed. Only same-origin `<canvas>` or `<img>` elements with `crossOrigin = 'anonymous'` set **before** `.src` are safe.
+2. Search the diff for `new Image()` or `fetch(` inside `telemetry-overlay.ts` — any network fetch whose result flows into the Canvas is a taint risk.
+3. Confirm no DOM-based map library (`leaflet`, `mapbox-gl`, `@googlemaps/*`) has been added to `package.json`. These cannot render into a Canvas stream without tainting it.
+
+If all three checks pass, `captureStream()` remains un-tainted and the WebM export is safe.
+
+---
+
 ## Quick Taint Test
 
 Run in browser DevTools after adding a new visual element to the export:
