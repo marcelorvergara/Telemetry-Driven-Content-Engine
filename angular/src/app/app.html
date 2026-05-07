@@ -73,9 +73,6 @@
           [videoEl]="videoEl"
           [telemetry]="telemetry()"
           [showMap]="showMapPath()" />
-        @if (showMapPath()) {
-          <app-map-overlay [gps]="telemetry()?.gps ?? []" [videoEl]="videoEl" />
-        }
       </div>
     </section>
 

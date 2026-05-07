@@ -7,7 +7,6 @@ import { TelemetryMathService } from './core/services/telemetry-math';
 import { ClipApiService, buildClipRequest } from './core/services/clip-api.service';
 import { TelemetryVaultService } from './core/services/telemetry-vault.service';
 import { TelemetryOverlay } from './core/components/telemetry-overlay/telemetry-overlay';
-import { MapOverlay } from './core/components/map-overlay/map-overlay';
 import { ThemeService } from './core/services/theme.service';
 import { ALL_THEMES } from './core/models/theme.model';
 
@@ -20,7 +19,7 @@ interface FeedEntry {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [TelemetryOverlay, MapOverlay],
+  imports: [TelemetryOverlay],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
