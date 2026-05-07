@@ -34,6 +34,13 @@ export interface TelemetryResult {
   grav: GRAVSample[];
 }
 
+export interface LatLonBounds {
+  minLat: number;
+  maxLat: number;
+  minLon: number;
+  maxLon: number;
+}
+
 // ---------- Worker message protocol ----------
 
 export interface WorkerRequest {

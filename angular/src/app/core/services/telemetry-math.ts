@@ -1,6 +1,25 @@
 import { Injectable } from '@angular/core';
-import { ACCLSample, GPS9Sample, GRAVSample } from '../models/telemetry.model';
+import { ACCLSample, GPS9Sample, GRAVSample, LatLonBounds } from '../models/telemetry.model';
 import { ThemeService } from './theme.service';
+
+// Perpendicular distance from a point to the infinite line defined by lineStart→lineEnd.
+// Operates on flat [lat, lon] pairs — valid for ride-scale distances where the
+// planar approximation error is negligible (< 0.01 % within a 50 km bounding box).
+function perpendicularDistance(
+  point:     [number, number],
+  lineStart: [number, number],
+  lineEnd:   [number, number],
+): number {
+  const dx = lineEnd[0]   - lineStart[0];
+  const dy = lineEnd[1]   - lineStart[1];
+  if (dx === 0 && dy === 0) {
+    return Math.sqrt((point[0] - lineStart[0]) ** 2 + (point[1] - lineStart[1]) ** 2);
+  }
+  const area = Math.abs(
+    dy * point[0] - dx * point[1] + lineEnd[0] * lineStart[1] - lineEnd[1] * lineStart[0],
+  );
+  return area / Math.sqrt(dx ** 2 + dy ** 2);
+}
 
 const G = 9.81;
 const RAD_TO_DEG = 180 / Math.PI;
@@ -138,6 +157,56 @@ export class TelemetryMathService {
       this._lastSpeedUpdateTime = nowMs;
     }
     return this._lastSpeedValue;
+  }
+
+  // Returns [lat, lon] pairs for every GPS-locked sample (fix >= 2).
+  // Values are post-SCAL decimal degrees straight from the parser — no unit conversion.
+  getRawPath(gps: GPS9Sample[]): [number, number][] {
+    return gps.filter(s => s.fix >= 2).map(s => [s.lat, s.lon]);
+  }
+
+  // Returns the geographic bounding box of all GPS-locked samples, or null when
+  // no locked samples exist. Null is the expected result for a clip with no GPS fix
+  // and must be checked by the caller before passing to a map engine.
+  getGeoBounds(gps: GPS9Sample[]): LatLonBounds | null {
+    const locked = gps.filter(s => s.fix >= 2);
+    if (locked.length === 0) return null;
+
+    let minLat = locked[0].lat, maxLat = locked[0].lat;
+    let minLon = locked[0].lon, maxLon = locked[0].lon;
+
+    for (let i = 1; i < locked.length; i++) {
+      const { lat, lon } = locked[i];
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+    }
+
+    return { minLat, maxLat, minLon, maxLon };
+  }
+
+  // Ramer-Douglas-Peucker path simplification. Tolerance is in decimal degrees;
+  // 0.0001° ≈ 11 m at mid-latitudes — a safe default for ride-scale paths.
+  // One-time call on clip load, not in the rAF loop.
+  simplifyPath(path: [number, number][], tolerance: number): [number, number][] {
+    if (path.length <= 2) return path;
+
+    const start = path[0];
+    const end   = path[path.length - 1];
+    let maxDist = 0;
+    let maxIdx  = 0;
+
+    for (let i = 1; i < path.length - 1; i++) {
+      const d = perpendicularDistance(path[i], start, end);
+      if (d > maxDist) { maxDist = d; maxIdx = i; }
+    }
+
+    if (maxDist <= tolerance) return [start, end];
+
+    const left  = this.simplifyPath(path.slice(0, maxIdx + 1), tolerance);
+    const right = this.simplifyPath(path.slice(maxIdx), tolerance);
+    return [...left.slice(0, -1), ...right];
   }
 
   // Theme-aware G-force for display. 'instant' passes through directly; 'max-hold'

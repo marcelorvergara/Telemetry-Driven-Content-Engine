@@ -7,6 +7,7 @@ import { TelemetryMathService } from './core/services/telemetry-math';
 import { ClipApiService, buildClipRequest } from './core/services/clip-api.service';
 import { TelemetryVaultService } from './core/services/telemetry-vault.service';
 import { TelemetryOverlay } from './core/components/telemetry-overlay/telemetry-overlay';
+import { MapOverlay } from './core/components/map-overlay/map-overlay';
 import { ThemeService } from './core/services/theme.service';
 import { ALL_THEMES } from './core/models/theme.model';
 
@@ -19,7 +20,7 @@ interface FeedEntry {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [TelemetryOverlay],
+  imports: [TelemetryOverlay, MapOverlay],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -31,7 +32,8 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly library      = signal<ClipMetadataDto[]>([]);
   pipelineError: string | null = null;
 
-  readonly allThemes = ALL_THEMES;
+  readonly allThemes    = ALL_THEMES;
+  readonly showMapPath  = signal<boolean>(false);
 
   private objectUrl: string | null = null;
 

@@ -109,6 +109,64 @@
   }
 }
 
+// ── Map Path Toggle ───────────────────────────────────────────────────────
+
+.map-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: rgba(0, 255, 255, 0.45);
+  transition: color 0.15s;
+
+  input[type='checkbox'] { display: none; }
+
+  &.active {
+    color: var(--cyan);
+    text-shadow: 0 0 8px var(--cyan);
+  }
+}
+
+.map-toggle-track {
+  position: relative;
+  width: 2rem;
+  height: 1rem;
+  background: rgba(0, 255, 255, 0.08);
+  border: 1px solid rgba(0, 255, 255, 0.2);
+  border-radius: 0.5rem;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+
+  .map-toggle.active & {
+    background: rgba(0, 255, 255, 0.18);
+    border-color: var(--cyan);
+    box-shadow: 0 0 8px rgba(0, 255, 255, 0.35);
+  }
+}
+
+.map-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 0.625rem;
+  height: 0.625rem;
+  background: rgba(0, 255, 255, 0.4);
+  border-radius: 50%;
+  transition: transform 0.15s, background 0.15s, box-shadow 0.15s;
+
+  .map-toggle.active & {
+    transform: translateX(1rem);
+    background: var(--cyan);
+    box-shadow: 0 0 6px var(--cyan);
+  }
+}
+
+.map-toggle-label { white-space: nowrap; }
+
 // ── Error ─────────────────────────────────────────────────────────────────
 
 .error-msg {

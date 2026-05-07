@@ -9,7 +9,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { TelemetryResult } from '../../models/telemetry.model';
+import { TelemetryResult, GPS9Sample } from '../../models/telemetry.model';
 import { TelemetryMathService } from '../../services/telemetry-math';
 import { ThemeService } from '../../services/theme.service';
 import { ThemeConfig } from '../../models/theme.model';
@@ -43,6 +43,7 @@ interface LayoutAnchors {
 export class TelemetryOverlay implements OnDestroy {
   readonly videoEl   = input.required<HTMLVideoElement>();
   readonly telemetry = input<TelemetryResult | null>(null);
+  readonly showMap   = input<boolean>(false);
 
   private readonly canvasRef    = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly ngZone       = inject(NgZone);
@@ -154,6 +155,11 @@ export class TelemetryOverlay implements OnDestroy {
       ghostCtx.fillRect(0, 0, EXPORT_W, EXPORT_H);
       this.drawSpeedReadout(ghostCtx, EXPORT_W, EXPORT_H, this.lastSpeed, theme, anchors);
       this.drawGForceBar(ghostCtx, EXPORT_W, EXPORT_H, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
+
+      const exportTelemetry = this.telemetry();
+      if (this.showMap() && exportTelemetry && exportTelemetry.gps.length > 0) {
+        this.drawVectorMap(ghostCtx, EXPORT_W, exportTelemetry.gps, videoEl.currentTime * 1000);
+      }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (videoEl as any).requestVideoFrameCallback(onFrame);
@@ -273,6 +279,10 @@ export class TelemetryOverlay implements OnDestroy {
     const anchors = this.resolveLayout(theme.layout, this.canvasWidth, this.canvasHeight);
     this.drawSpeedReadout(ctx, this.canvasWidth, this.canvasHeight, speed, theme, anchors);
     this.drawGForceBar(ctx, this.canvasWidth, this.canvasHeight, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
+
+    if (this.showMap() && gps.length > 0) {
+      this.drawVectorMap(ctx, this.canvasWidth, gps, relativeTimeMs);
+    }
   }
 
   // ── Layout ───────────────────────────────────────────────────────────────
@@ -504,6 +514,84 @@ export class TelemetryOverlay implements OnDestroy {
       ctx.moveTo(markerX, barY - 2);
       ctx.lineTo(markerX, barY + barH + 2);
       ctx.stroke();
+    }
+
+    ctx.shadowBlur = 0;
+  }
+
+  // ── Vector map ───────────────────────────────────────────────────────────
+  // Projects [lat, lon] into pixel space within a canvas bounding box.
+  // Y is inverted: maxLat → top of box, minLat → bottom (canvas grows downward).
+  // Returns the centre of the box when the ride is a single point (dLat or dLon = 0).
+  private projectLatLon(
+    lat: number, lon: number,
+    minLat: number, maxLat: number,
+    minLon: number, maxLon: number,
+    bx: number, by: number, bw: number, bh: number,
+  ): [number, number] {
+    const dLat = maxLat - minLat;
+    const dLon = maxLon - minLon;
+    if (dLat === 0 || dLon === 0) return [bx + bw / 2, by + bh / 2];
+    return [
+      bx + ((lon - minLon) / dLon) * bw,
+      by + ((maxLat - lat) / dLat) * bh,
+    ];
+  }
+
+  // Draws a pure-vector GPS path and current-position dot into any ctx.
+  // No tile images are drawn — canvas stays origin-clean for captureStream().
+  private drawVectorMap(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    gps: GPS9Sample[],
+    relativeTimeMs: number,
+  ): void {
+    const locked = gps.filter(s => s.fix >= 2);
+    const path   = locked.length > 0 ? locked : gps;
+    if (path.length < 2) return;
+
+    // Map box: top-right corner, 18 % of canvas width, 2:3 aspect ratio.
+    const mapW    = Math.round(width * 0.18);
+    const mapH    = Math.round(mapW * 0.667);
+    const padding = Math.round(mapW * 0.05);
+    const bx      = width - mapW - 16 + padding;
+    const by      = 16 + padding;
+    const bw      = mapW - 2 * padding;
+    const bh      = mapH - 2 * padding;
+
+    // Geographic bounds of the ride.
+    let minLat = path[0].lat, maxLat = path[0].lat;
+    let minLon = path[0].lon, maxLon = path[0].lon;
+    for (const { lat, lon } of path) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+    }
+
+    // Full ride path — cyan, no shadow (keeps canvas untainted).
+    ctx.shadowBlur  = 0;
+    ctx.strokeStyle = '#00FFFF';
+    ctx.lineWidth   = 2;
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
+    ctx.beginPath();
+    const [sx, sy] = this.projectLatLon(path[0].lat, path[0].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+    ctx.moveTo(sx, sy);
+    for (let i = 1; i < path.length; i++) {
+      const [px, py] = this.projectLatLon(path[i].lat, path[i].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // Current-position dot — magenta.
+    const atom = this.math.findClosestAtom(path, relativeTimeMs);
+    if (atom) {
+      const [mx, my] = this.projectLatLon(atom.lat, atom.lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+      ctx.beginPath();
+      ctx.fillStyle = '#FF00FF';
+      ctx.arc(mx, my, Math.max(3, Math.round(mapW * 0.025)), 0, Math.PI * 2);
+      ctx.fill();
     }
 
     ctx.shadowBlur = 0;

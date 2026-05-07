@@ -33,6 +33,14 @@
         }
       </div>
 
+      <label class="map-toggle" [class.active]="showMapPath()">
+        <input type="checkbox" [checked]="showMapPath()" (change)="showMapPath.set(!showMapPath())">
+        <span class="map-toggle-track">
+          <span class="map-toggle-thumb"></span>
+        </span>
+        <span class="map-toggle-label">MAP PATH</span>
+      </label>
+
     </div>
   </header>
 
@@ -63,7 +71,11 @@
         <app-telemetry-overlay
           #overlay
           [videoEl]="videoEl"
-          [telemetry]="telemetry()" />
+          [telemetry]="telemetry()"
+          [showMap]="showMapPath()" />
+        @if (showMapPath()) {
+          <app-map-overlay [gps]="telemetry()?.gps ?? []" [videoEl]="videoEl" />
+        }
       </div>
     </section>
 
