@@ -92,6 +92,27 @@ getResultLen() uint32
 - `MediaRecorder` captures frames from `canvas.captureStream()` — DOM elements are invisible to it. Getting a DOM map into the WebM export would require `ctx.drawImage()` with tile images. This marks the canvas **origin-dirty**, causing `captureStream()` to emit opaque-black frames with no thrown exception.
 - The Canvas vector path is the single implementation for both the live HUD and the WebM export. No dual-layer, no synchronisation overhead, no tile cache competing against the 64 MB JS heap.
 
+### Canvas Rendering — globalAlpha Leak Guard
+
+**Any draw call that mutates `ctx.globalAlpha` must be wrapped in `ctx.save()` / `ctx.restore()`.**
+
+- A leaked alpha silently dims the entire 60 Hz HUD with no thrown error and no console warning — it is invisible until someone screenshots the overlay.
+- `ctx.restore()` is the only reliable reset. An explicit `ctx.globalAlpha = 1.0` after the draw is an acceptable fallback only if no other state (transform, clip, composite) was modified.
+- This rule applies to the map background block in `drawVectorMap` and to every future Canvas primitive that needs transparency.
+
+### ThemeConfig.map — Aesthetics Sub-object
+
+`ThemeConfig` carries a `map` sub-object that owns all map background aesthetics:
+
+```typescript
+map: { backgroundAlpha: number; strokeWidth: number; showGrid: boolean; }
+```
+
+- `backgroundAlpha` is the sole input to `ctx.globalAlpha` in `drawVectorMap`. It is the only legal place to control map transparency.
+- **`ctx.fillStyle` for the map background reads `theme.colors.secondary`.** This is a known shared dependency: `colors.secondary` is also consumed by the G-force bar outline and peak-marker stroke in `drawGForceBar`. Changing `colors.secondary` in any preset will affect both. Future fix: add `color: string` to the `map` sub-object and update the single `ctx.fillStyle` assignment in `drawVectorMap`.
+- **Optical-mix trap**: a light hex colour (e.g. `#FFFFFF`) at `backgroundAlpha < 0.5` over dark video pixels optically mixes to muddy gray. `CLEAN_SPORT` sets `backgroundAlpha: 0.85` as its floor for exactly this reason. Never lower a light-coloured preset below `0.7`.
+- The `ThemeService.updateMapAlpha(alpha: number)` method patches the active signal without overwriting `strokeWidth` or `showGrid`. Use it — do not call `setTheme()` with a reconstructed object just to change alpha.
+
 ### Sensor Noise Floors — Do Not Lower
 - **ACCL deadzone**: readings < **0.25 G** are indistinguishable from MEMS noise. Set in `calculateGForceMagnitude`.
 - **GPS speed floor**: `SPEED_FLOOR_MS = 8.0 / 3.6` (~2.22 m/s). Applied at all 4 return paths in `interpolateSpeed`.
