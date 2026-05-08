@@ -167,6 +167,68 @@
 
 .map-toggle-label { white-space: nowrap; }
 
+// ── Map Alpha Slider ──────────────────────────────────────────────────────
+
+.alpha-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.alpha-label {
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: rgba(0, 255, 255, 0.45);
+  white-space: nowrap;
+}
+
+.alpha-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 6rem;
+  height: 2px;
+  background: rgba(0, 255, 255, 0.2);
+  border-radius: 1px;
+  outline: none;
+  cursor: pointer;
+
+  &::-webkit-slider-runnable-track {
+    height: 2px;
+    background: rgba(0, 255, 255, 0.2);
+    border-radius: 1px;
+  }
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 6px var(--cyan);
+    margin-top: -4px;
+    cursor: pointer;
+  }
+
+  &::-moz-range-track {
+    height: 2px;
+    background: rgba(0, 255, 255, 0.2);
+    border-radius: 1px;
+    border: none;
+  }
+
+  &::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 6px var(--cyan);
+    border: none;
+    cursor: pointer;
+  }
+}
+
 // ── Error ─────────────────────────────────────────────────────────────────
 
 .error-msg {

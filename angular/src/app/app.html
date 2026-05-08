@@ -41,6 +41,20 @@
         <span class="map-toggle-label">MAP PATH</span>
       </label>
 
+      @if (showMapPath()) {
+        <div class="alpha-control">
+          <span class="alpha-label">BG ALPHA</span>
+          <input
+            type="range"
+            class="alpha-slider"
+            min="0"
+            max="1"
+            step="0.05"
+            [value]="themeService.currentTheme().map.backgroundAlpha"
+            (input)="themeService.updateMapAlpha(+$any($event.target).value)">
+        </div>
+      }
+
     </div>
   </header>
 

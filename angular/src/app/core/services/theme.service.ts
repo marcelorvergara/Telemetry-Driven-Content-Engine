@@ -8,4 +8,8 @@ export class ThemeService {
   setTheme(theme: ThemeConfig): void {
     this.currentTheme.set(theme);
   }
+
+  updateMapAlpha(alpha: number): void {
+    this.currentTheme.update(t => ({ ...t, map: { ...t.map, backgroundAlpha: alpha } }));
+  }
 }

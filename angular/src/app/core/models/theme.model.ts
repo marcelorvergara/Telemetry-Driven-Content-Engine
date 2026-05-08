@@ -16,6 +16,11 @@ export interface ThemeConfig {
   layout: 'spread' | 'stacked' | 'dashboard' | 'tiktok-cover';
   speedUpdateIntervalMs: number;
   gForceBehavior: 'instant' | 'max-hold';
+  map: {
+    backgroundAlpha: number;
+    strokeWidth: number;
+    showGrid: boolean;
+  };
 }
 
 export const VERGARA_YOUTUBE: ThemeConfig = {
@@ -36,13 +41,14 @@ export const VERGARA_YOUTUBE: ThemeConfig = {
   layout: 'spread',
   speedUpdateIntervalMs: 0,
   gForceBehavior: 'instant',
+  map: { backgroundAlpha: 0.4, strokeWidth: 2, showGrid: false },
 };
 
 export const CLEAN_SPORT: ThemeConfig = {
   id: 'clean-sport',
   colors: {
     primary:   '#FFFFFF',
-    secondary: '#333333',
+    secondary: '#FFFFFF',
     accent:    '#FF6600',
     text:      '#FFFFFF',
     success:   '#00CC44',
@@ -56,6 +62,7 @@ export const CLEAN_SPORT: ThemeConfig = {
   layout: 'stacked',
   speedUpdateIntervalMs: 250,
   gForceBehavior: 'instant',
+  map: { backgroundAlpha: 0.85, strokeWidth: 2, showGrid: false },
 };
 
 export const VERGARA_TIKTOK: ThemeConfig = {
@@ -76,6 +83,7 @@ export const VERGARA_TIKTOK: ThemeConfig = {
   layout: 'tiktok-cover',
   speedUpdateIntervalMs: 0,
   gForceBehavior: 'max-hold',
+  map: { backgroundAlpha: 1.0, strokeWidth: 2, showGrid: false },
 };
 
 export const ALL_THEMES: ThemeConfig[] = [VERGARA_YOUTUBE, CLEAN_SPORT, VERGARA_TIKTOK];

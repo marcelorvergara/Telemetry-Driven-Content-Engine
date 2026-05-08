@@ -158,7 +158,7 @@ export class TelemetryOverlay implements OnDestroy {
 
       const exportTelemetry = this.telemetry();
       if (this.showMap() && exportTelemetry && exportTelemetry.gps.length > 0) {
-        this.drawVectorMap(ghostCtx, EXPORT_W, exportTelemetry.gps, videoEl.currentTime * 1000);
+        this.drawVectorMap(ghostCtx, EXPORT_W, exportTelemetry.gps, videoEl.currentTime * 1000, theme);
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -281,7 +281,7 @@ export class TelemetryOverlay implements OnDestroy {
     this.drawGForceBar(ctx, this.canvasWidth, this.canvasHeight, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
 
     if (this.showMap() && gps.length > 0) {
-      this.drawVectorMap(ctx, this.canvasWidth, gps, relativeTimeMs);
+      this.drawVectorMap(ctx, this.canvasWidth, gps, relativeTimeMs, theme);
     }
   }
 
@@ -545,6 +545,7 @@ export class TelemetryOverlay implements OnDestroy {
     width: number,
     gps: GPS9Sample[],
     relativeTimeMs: number,
+    theme: ThemeConfig,
   ): void {
     const locked = gps.filter(s => s.fix >= 2);
     const path   = locked.length > 0 ? locked : gps;
@@ -558,6 +559,19 @@ export class TelemetryOverlay implements OnDestroy {
     const by      = 16 + padding;
     const bw      = mapW - 2 * padding;
     const bh      = mapH - 2 * padding;
+
+    // Theme-driven background — drawn before the path so it sits behind the vector.
+    // save/restore isolates globalAlpha; leak would taint the entire 60 Hz HUD.
+    ctx.save();
+    ctx.globalAlpha = theme.map.backgroundAlpha;
+    ctx.fillStyle   = theme.colors.secondary;
+    ctx.fillRect(
+      Math.round(width - mapW - 16),
+      Math.round(16),
+      Math.round(mapW),
+      Math.round(mapH),
+    );
+    ctx.restore();
 
     // Geographic bounds of the ride.
     let minLat = path[0].lat, maxLat = path[0].lat;
