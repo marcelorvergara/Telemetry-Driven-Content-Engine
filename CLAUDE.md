@@ -61,6 +61,7 @@ The parser owns the SCAL divide and emits physical units. Angular receives only 
 ### Timestamps
 - **GPS9**: GPS UTC fields, anchor `GPS2000Epoch = 946684800`. Subtract `videoStartSec * 1000`.
 - **ACCL / GRAV**: `(cumulative_index / rate_hz) * 1000` ms (wrong after pause/resume gaps — deferred fix).
+- **Strava GPX**: `absoluteUnixMs = new Date(timeStr).getTime()`. Compute `.t = absoluteUnixMs - videoStartEpoch * 1000`. Store `absoluteUnixMs` on `StravaGpsPoint` — the user may upload the GPX before loading the GoPro clip. Re-anchor in `onFileSelected()` after the video parse completes. Never recompute `absoluteUnixMs`.
 - All `.t` values: **milliseconds from video start** (`currentTime × 1000`). Never emit seconds, µs, or raw GPS epoch.
 
 ### Sensor Scope (MVP)
@@ -130,7 +131,7 @@ Detailed rules, rationale, and constraints for each subsystem live in dedicated 
 | GPMF parser + WASM (Sprint 1) | [Docs/architecture/gpmf-parser.md](Docs/architecture/gpmf-parser.md) |
 | Backend — Spring Boot + PostgreSQL (Sprint 4) | [Docs/architecture/backend.md](Docs/architecture/backend.md) |
 | Theme engine — Canvas strategy (Sprint 5) | [Docs/architecture/theme-engine.md](Docs/architecture/theme-engine.md) |
-| Map feature — Leaflet + Canvas vector (Sprint 6) | [Docs/architecture/map-feature.md](Docs/architecture/map-feature.md) |
+| Map feature — Canvas vector, Strava GPX, Path2D cache, zoom (Sprint 6+) | [Docs/architecture/map-feature.md](Docs/architecture/map-feature.md) |
 | Sensor noise floors — hardware realities | [Docs/architecture/sensor-deadzones.md](Docs/architecture/sensor-deadzones.md) |
 
 ---
