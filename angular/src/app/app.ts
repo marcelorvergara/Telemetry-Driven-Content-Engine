@@ -1,11 +1,12 @@
 import { Component, OnDestroy, OnInit, signal } from '@angular/core';
-import { TelemetryResult } from './core/models/telemetry.model';
+import { TelemetryResult, StravaGpsPoint } from './core/models/telemetry.model';
 import { ClipMetadataDto } from './core/models/clip.model';
 import { Mp4DemuxerService } from './core/services/mp4-demuxer';
 import { GpmfParserService } from './core/services/gpmf-parser.service';
 import { TelemetryMathService } from './core/services/telemetry-math';
 import { ClipApiService, buildClipRequest } from './core/services/clip-api.service';
 import { TelemetryVaultService } from './core/services/telemetry-vault.service';
+import { StravaTelemetryService } from './core/services/strava-telemetry.service';
 import { TelemetryOverlay } from './core/components/telemetry-overlay/telemetry-overlay';
 import { ThemeService } from './core/services/theme.service';
 import { ALL_THEMES } from './core/models/theme.model';
@@ -31,18 +32,23 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly library      = signal<ClipMetadataDto[]>([]);
   pipelineError: string | null = null;
 
-  readonly allThemes    = ALL_THEMES;
-  readonly showMapPath  = signal<boolean>(false);
+  readonly allThemes       = ALL_THEMES;
+  readonly showMapPath     = signal<boolean>(false);
+  readonly mapZoom         = signal<number>(1);
+  readonly telemetrySource = signal<'GoPro' | 'Strava'>('GoPro');
+  readonly stravaGps       = signal<StravaGpsPoint[]>([]);
+  readonly syncOffsetMs    = signal<number>(0);
 
   private objectUrl: string | null = null;
 
   constructor(
-    private readonly demuxer:      Mp4DemuxerService,
-    private readonly parser:       GpmfParserService,
-    private readonly math:         TelemetryMathService,
-    private readonly clipApi:      ClipApiService,
-    private readonly vault:        TelemetryVaultService,
-    readonly         themeService: ThemeService,
+    private readonly demuxer:        Mp4DemuxerService,
+    private readonly parser:         GpmfParserService,
+    private readonly math:           TelemetryMathService,
+    private readonly clipApi:        ClipApiService,
+    private readonly vault:          TelemetryVaultService,
+    private readonly stravaService:  StravaTelemetryService,
+    readonly         themeService:   ThemeService,
   ) {}
 
   // Load the Library from PostgreSQL on app start. Failure is non-fatal —
@@ -83,6 +89,18 @@ export class AppComponent implements OnInit, OnDestroy {
       // decoding + Option B SCAL application, then self-terminates (Nuke Option).
       const result = await this.parser.parse(metBytes, videoStartSec);
       this.telemetry.set(result);
+
+      // Re-anchor Strava points if they were loaded before this video.
+      // When GPX is uploaded first, videoStartSec=0 is used and .t values become
+      // absolute Unix ms (~1.7T ms). Re-anchor using the actual videoStartEpoch.
+      if (this.stravaGps().length > 0) {
+        const videoStartMs = result.videoStartEpoch * 1000;
+        this.stravaGps.update(pts => pts.map(p => ({
+          ...p,
+          t:               p.absoluteUnixMs - videoStartMs,
+          relativeTimeSec: (p.absoluteUnixMs - videoStartMs) / 1000,
+        })));
+      }
       console.log(
         `[PARSER] TelemetryResult: ${result.gps.length} GPS atoms,` +
         ` ${result.accl.length} ACCL atoms,` +
@@ -144,6 +162,29 @@ export class AppComponent implements OnInit, OnDestroy {
       speedKmh: Math.round(speedMs * 3.6),
       gForce:   +gForce.toFixed(2),
     }, ...prev].slice(0, 10));
+  }
+
+  setTelemetrySource(source: 'GoPro' | 'Strava'): void {
+    this.telemetrySource.set(source);
+    const activeDataset = source === 'GoPro' ? (this.telemetry()?.gps ?? []) : this.stravaGps();
+    console.log('[Task 1 Complete] UI: Telemetry source changed to:', source, '| Offset:', this.syncOffsetMs());
+    console.log('[Task 3 Complete] State: Active dataset mapped. Source:', source, '| Data points:', activeDataset.length);
+  }
+
+  onSyncOffsetChange(offsetMs: number): void {
+    this.syncOffsetMs.set(offsetMs);
+    console.log('[Task 1 Complete] UI: Telemetry source changed to:', this.telemetrySource(), '| Offset:', offsetMs);
+  }
+
+  async onGpxSelected(event: Event): Promise<void> {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const videoStartSec = this.telemetry()?.videoStartEpoch ?? 0;
+    const data = await this.stravaService.parseGpx(file, videoStartSec);
+    this.stravaGps.set(data);
+    const currentSource = this.telemetrySource();
+    const activeDataset = currentSource === 'GoPro' ? (this.telemetry()?.gps ?? []) : data;
+    console.log('[Task 3 Complete] State: Active dataset mapped. Source:', currentSource, '| Data points:', activeDataset.length);
   }
 
   formatTime(ms: number): string {

@@ -9,7 +9,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { TelemetryResult, GPS9Sample } from '../../models/telemetry.model';
+import { TelemetryResult, GPS9Sample, StravaGpsPoint } from '../../models/telemetry.model';
 import { TelemetryMathService } from '../../services/telemetry-math';
 import { ThemeService } from '../../services/theme.service';
 import { ThemeConfig } from '../../models/theme.model';
@@ -41,9 +41,13 @@ interface LayoutAnchors {
   styleUrl: './telemetry-overlay.scss',
 })
 export class TelemetryOverlay implements OnDestroy {
-  readonly videoEl   = input.required<HTMLVideoElement>();
-  readonly telemetry = input<TelemetryResult | null>(null);
-  readonly showMap   = input<boolean>(false);
+  readonly videoEl        = input.required<HTMLVideoElement>();
+  readonly telemetry      = input<TelemetryResult | null>(null);
+  readonly showMap        = input<boolean>(false);
+  readonly stravaGps       = input<StravaGpsPoint[]>([]);
+  readonly syncOffsetMs    = input<number>(0);
+  readonly telemetrySource = input<'GoPro' | 'Strava'>('GoPro');
+  readonly mapZoom         = input<number>(1);
 
   private readonly canvasRef    = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly ngZone       = inject(NgZone);
@@ -57,6 +61,14 @@ export class TelemetryOverlay implements OnDestroy {
   private rafId = 0;
   private canvasWidth  = 0;
   private canvasHeight = 0;
+  private _lastMapLogTime = 0;
+
+  private _path2DCache: {
+    path2D: Path2D;
+    clippedPoints: Array<{ t: number; lat: number; lon: number; fix?: number }>;
+    bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number };
+    cacheKey: { width: number; srcLen: number; srcT0: number; durationMs: number };
+  } | null = null;
 
   // ── Visual decay state ───────────────────────────────────────────────────
   private currentDisplayedGForce = 0;
@@ -156,9 +168,19 @@ export class TelemetryOverlay implements OnDestroy {
       this.drawSpeedReadout(ghostCtx, EXPORT_W, EXPORT_H, this.lastSpeed, theme, anchors);
       this.drawGForceBar(ghostCtx, EXPORT_W, EXPORT_H, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
 
-      const exportTelemetry = this.telemetry();
-      if (this.showMap() && exportTelemetry && exportTelemetry.gps.length > 0) {
-        this.drawVectorMap(ghostCtx, EXPORT_W, exportTelemetry.gps, videoEl.currentTime * 1000, theme);
+      if (this.showMap()) {
+        if (this.telemetrySource() === 'Strava') {
+          const stravaPoints = this.stravaGps();
+          if (stravaPoints.length > 0) {
+            const renderTimeMs = videoEl.currentTime * 1000 + this.syncOffsetMs();
+            this.drawVectorMap(ghostCtx, EXPORT_W, stravaPoints, renderTimeMs, theme, true);
+          }
+        } else {
+          const exportTelemetry = this.telemetry();
+          if (exportTelemetry && exportTelemetry.gps.length > 0) {
+            this.drawVectorMap(ghostCtx, EXPORT_W, exportTelemetry.gps, videoEl.currentTime * 1000, theme, false);
+          }
+        }
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -280,8 +302,16 @@ export class TelemetryOverlay implements OnDestroy {
     this.drawSpeedReadout(ctx, this.canvasWidth, this.canvasHeight, speed, theme, anchors);
     this.drawGForceBar(ctx, this.canvasWidth, this.canvasHeight, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
 
-    if (this.showMap() && gps.length > 0) {
-      this.drawVectorMap(ctx, this.canvasWidth, gps, relativeTimeMs, theme);
+    if (this.showMap()) {
+      if (this.telemetrySource() === 'Strava') {
+        const stravaPoints = this.stravaGps();
+        if (stravaPoints.length > 0) {
+          const renderTimeMs = currentTime * 1000 + this.syncOffsetMs();
+          this.drawVectorMap(ctx, this.canvasWidth, stravaPoints, renderTimeMs, theme, true);
+        }
+      } else if (gps.length > 0) {
+        this.drawVectorMap(ctx, this.canvasWidth, gps, relativeTimeMs, theme, false);
+      }
     }
   }
 
@@ -540,18 +570,29 @@ export class TelemetryOverlay implements OnDestroy {
 
   // Draws a pure-vector GPS path and current-position dot into any ctx.
   // No tile images are drawn — canvas stays origin-clean for captureStream().
+  //
+  // points: accepts GPS9Sample[] (GoPro) or StravaGpsPoint[] — both carry {t, lat, lon, fix?}.
+  // useLinearInterp: false → snap to nearest atom (GoPro 18 Hz);
+  //                  true  → linear interpolation between bracketing points (Strava 1 Hz).
+  //
+  // Performance contract:
+  //   - Path2D is built once on cache miss (O(N) work); ctx.stroke(path2D) in the 60 Hz loop.
+  //   - Zoom applied via ctx.translate/scale — no per-frame coordinate iteration.
   private drawVectorMap(
     ctx: CanvasRenderingContext2D,
     width: number,
-    gps: GPS9Sample[],
-    relativeTimeMs: number,
+    points: Array<{ t: number; lat: number; lon: number; fix?: number }>,
+    renderTimeMs: number,
     theme: ThemeConfig,
+    useLinearInterp: boolean,
   ): void {
-    const locked = gps.filter(s => s.fix >= 2);
-    const path   = locked.length > 0 ? locked : gps;
-    if (path.length < 2) return;
+    // GoPro: keep only fix >= 2 locked samples; fall back to all if none locked.
+    // Strava: fix is undefined for all points — passes the filter, uses full array.
+    const locked = points.filter(p => p.fix === undefined || p.fix >= 2);
+    const base   = locked.length > 0 ? locked : points;
+    if (base.length < 2) return;
 
-    // Map box: top-right corner, 18 % of canvas width, 2:3 aspect ratio.
+    // Map box geometry — derived purely from width, stable across frames at fixed size.
     const mapW    = Math.round(width * 0.18);
     const mapH    = Math.round(mapW * 0.667);
     const padding = Math.round(mapW * 0.05);
@@ -560,53 +601,129 @@ export class TelemetryOverlay implements OnDestroy {
     const bw      = mapW - 2 * padding;
     const bh      = mapH - 2 * padding;
 
-    // Theme-driven background — drawn before the path so it sits behind the vector.
-    // save/restore isolates globalAlpha; leak would taint the entire 60 Hz HUD.
+    // Video duration rounded to ms — used as a stable cache-key component.
+    const rawDuration = this.videoEl().duration;
+    const durationMs  = isFinite(rawDuration) ? Math.round(rawDuration * 1000) : 0;
+
+    // ── Path2D cache ────────────────────────────────────────────────────────
+    // Rebuild only when source data, canvas width, or video duration changes.
+    const ck = this._path2DCache?.cacheKey;
+    if (!ck || ck.width !== width || ck.srcLen !== base.length || ck.srcT0 !== base[0].t || ck.durationMs !== durationMs) {
+      // Temporal clip — only the portion of the route that the video covers.
+      const clipped = durationMs > 0
+        ? base.filter(p => p.t >= 0 && p.t <= durationMs)
+        : base;
+      if (clipped.length < 2) return;
+
+      let minLat = clipped[0].lat, maxLat = clipped[0].lat;
+      let minLon = clipped[0].lon, maxLon = clipped[0].lon;
+      for (const { lat, lon } of clipped) {
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+      }
+
+      // O(N) path build — happens once per cache miss, never inside the hot loop.
+      const p2d = new Path2D();
+      const [sx, sy] = this.projectLatLon(clipped[0].lat, clipped[0].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+      p2d.moveTo(sx, sy);
+      for (let i = 1; i < clipped.length; i++) {
+        const [px, py] = this.projectLatLon(clipped[i].lat, clipped[i].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+        p2d.lineTo(px, py);
+      }
+
+      this._path2DCache = {
+        path2D: p2d,
+        clippedPoints: clipped,
+        bounds: { minLat, maxLat, minLon, maxLon },
+        cacheKey: { width, srcLen: base.length, srcT0: base[0].t, durationMs },
+      };
+      console.log(
+        `[Map Path2D] Cached ${clipped.length} pts` +
+        ` (clipped from ${base.length}, duration=${durationMs}ms, width=${width})`,
+      );
+    }
+
+    const { path2D, clippedPoints, bounds: { minLat, maxLat, minLon, maxLon } } = this._path2DCache!;
+
+    // ── Background ──────────────────────────────────────────────────────────
+    // save/restore isolates globalAlpha — leak would taint the entire 60 Hz HUD.
     ctx.save();
     ctx.globalAlpha = theme.map.backgroundAlpha;
     ctx.fillStyle   = theme.colors.secondary;
-    ctx.fillRect(
-      Math.round(width - mapW - 16),
-      Math.round(16),
-      Math.round(mapW),
-      Math.round(mapH),
-    );
+    ctx.fillRect(width - mapW - 16, 16, mapW, mapH);
     ctx.restore();
 
-    // Geographic bounds of the ride.
-    let minLat = path[0].lat, maxLat = path[0].lat;
-    let minLon = path[0].lon, maxLon = path[0].lon;
-    for (const { lat, lon } of path) {
-      if (lat < minLat) minLat = lat;
-      if (lat > maxLat) maxLat = lat;
-      if (lon < minLon) minLon = lon;
-      if (lon > maxLon) maxLon = lon;
+    // ── Current-position dot ────────────────────────────────────────────────
+    let dotX = bx + bw / 2;
+    let dotY = by + bh / 2;
+
+    if (useLinearInterp) {
+      let lo = 0, hi = clippedPoints.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >>> 1;
+        if (clippedPoints[mid].t <= renderTimeMs) { lo = mid; } else { hi = mid - 1; }
+      }
+      const hiIdx = Math.min(lo + 1, clippedPoints.length - 1);
+      const loP   = clippedPoints[lo];
+      const hiP   = clippedPoints[hiIdx];
+      const dt    = hiP.t - loP.t;
+      const alpha = dt > 0 ? Math.max(0, Math.min(1, (renderTimeMs - loP.t) / dt)) : 0;
+      const lat   = loP.lat + (hiP.lat - loP.lat) * alpha;
+      const lon   = loP.lon + (hiP.lon - loP.lon) * alpha;
+      [dotX, dotY] = this.projectLatLon(lat, lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+
+      const now = performance.now();
+      if (now - this._lastMapLogTime > 1000) {
+        this._lastMapLogTime = now;
+        const zoom      = this.mapZoom();
+        const videoTime = (renderTimeMs - this.syncOffsetMs()) / 1000;
+        console.log(
+          '[Task 4 Complete] Render Loop: Interpolated coords at video time', videoTime,
+          'with offset', this.syncOffsetMs(),
+          zoom > 1 ? `| ctx.scale(${zoom}×) active — no per-frame array iteration` : '| zoom 1×',
+          '->', { lat, lon },
+        );
+      }
+    } else {
+      const atom = this.math.findClosestAtom(clippedPoints, renderTimeMs);
+      if (atom) {
+        [dotX, dotY] = this.projectLatLon(atom.lat, atom.lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+      }
     }
 
-    // Full ride path — cyan, no shadow (keeps canvas untainted).
+    // ── Route path via cached Path2D + optional zoom transform ──────────────
+    // ctx.clip() confines the zoomed path to the map box — prevents it bleeding
+    // into the speed/G-force HUD at high zoom levels.
+    const zoom = this.mapZoom();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(width - mapW - 16, 16, mapW, mapH);
+    ctx.clip();
+
     ctx.shadowBlur  = 0;
     ctx.strokeStyle = '#00FFFF';
     ctx.lineWidth   = 2;
     ctx.lineJoin    = 'round';
     ctx.lineCap     = 'round';
-    ctx.beginPath();
-    const [sx, sy] = this.projectLatLon(path[0].lat, path[0].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
-    ctx.moveTo(sx, sy);
-    for (let i = 1; i < path.length; i++) {
-      const [px, py] = this.projectLatLon(path[i].lat, path[i].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
-      ctx.lineTo(px, py);
-    }
-    ctx.stroke();
 
-    // Current-position dot — magenta.
-    const atom = this.math.findClosestAtom(path, relativeTimeMs);
-    if (atom) {
-      const [mx, my] = this.projectLatLon(atom.lat, atom.lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
-      ctx.beginPath();
-      ctx.fillStyle = '#FF00FF';
-      ctx.arc(mx, my, Math.max(3, Math.round(mapW * 0.025)), 0, Math.PI * 2);
-      ctx.fill();
+    if (zoom > 1) {
+      // Pin the dot on-screen; route zooms around it.
+      ctx.translate(dotX, dotY);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-dotX, -dotY);
     }
+
+    ctx.stroke(path2D);
+    ctx.restore();
+
+    // Dot drawn after restore — always at its projected canvas position,
+    // unaffected by the zoom transform.
+    ctx.beginPath();
+    ctx.fillStyle = '#FF00FF';
+    ctx.arc(dotX, dotY, Math.max(3, Math.round(mapW * 0.025)), 0, Math.PI * 2);
+    ctx.fill();
 
     ctx.shadowBlur = 0;
   }

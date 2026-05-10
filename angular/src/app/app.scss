@@ -167,6 +167,31 @@
 
 .map-toggle-label { white-space: nowrap; }
 
+// ── Telemetry Source Toggle ───────────────────────────────────────────────
+
+.source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.source-toggle-label {
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: rgba(0, 255, 255, 0.35);
+  margin-right: 0.15rem;
+  white-space: nowrap;
+}
+
+// ── GPS Sync Offset Slider ────────────────────────────────────────────────
+
+.offset-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 // ── Map Alpha Slider ──────────────────────────────────────────────────────
 
 .alpha-control {

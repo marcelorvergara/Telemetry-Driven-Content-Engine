@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Recurse -Path \"c:\\\\Users\\\\Pichau\\\\Projetos\\\\Telemetry-Driven Content Engine\\\\angular\\\\\" -Directory | Select-Object -ExpandProperty FullName | Sort-Object | head -100)",
+      "Bash(npx ng *)"
+    ]
+  }
+}

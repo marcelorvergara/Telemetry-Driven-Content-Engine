@@ -34,6 +34,15 @@ export interface TelemetryResult {
   grav: GRAVSample[];
 }
 
+export interface StravaGpsPoint {
+  t: number;              // ms from video start (matches GPS9Sample.t for render-loop compat)
+  lat: number;
+  lon: number;
+  ele: number;            // metres
+  relativeTimeSec: number; // seconds from video start (pre-ms conversion, kept for debugging)
+  absoluteUnixMs: number; // wall-clock ms from the GPX <time> element — survives re-anchoring
+}
+
 export interface LatLonBounds {
   minLat: number;
   maxLat: number;
