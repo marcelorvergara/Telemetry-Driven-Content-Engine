@@ -1,6 +1,6 @@
 # VergaraVerse: Telemetry-Driven Content Engine
 
-> A browser-native pipeline that parses GoPro GPMF telemetry directly from MP4 files using a zero-dependency WebAssembly module, renders 60 Hz speed and G-force overlays on a Canvas HUD, exports frame-accurate WebM clips, and catalogs ride history in a Spring Boot + PostgreSQL library — all without a server touching the raw video.
+> A browser-native pipeline that parses GoPro GPMF telemetry directly from MP4 files using a zero-dependency WebAssembly module, renders 60 Hz speed and G-force overlays on a Canvas HUD, exports frame-accurate WebM clips, and catalogs ride history in a Spring Boot + PostgreSQL library — all without a server touching the raw video. Strava GPX files can be loaded as an alternative GPS source, with the route clipped to the video's exact timeframe and rendered on the same Canvas HUD.
 
 <!-- Add dashboard screenshot here: full layout with video player + Live Telemetry Feed panel active -->
 ![VergaraVerse Dashboard](./Docs/Imgs/screenshot-dashboard.png)
@@ -75,6 +75,39 @@ A key correctness detail: `requestVideoFrameCallback` stops firing a few frames 
 
 ---
 
+### Strava GPX Integration
+
+When a GoPro clip is not the GPS source of truth — or when GPS lock was poor — a Strava `.gpx` file can be uploaded as a substitute. The toggle in the header switches between `GoPro` and `Strava` data sources; `drawVectorMap()` and the position dot consume whichever array is active.
+
+**Load-order problem.** A GPX file is often uploaded *before* the GoPro MP4 is loaded. At that point `videoStartEpoch` is unknown (defaults to `0`), so naïve `.t = absoluteUnixMs - 0` makes all Strava timestamps ≈ 1.78 × 10¹² ms — dwarfing any `currentTime` value. The position dot is always stuck at the first point.
+
+**Fix: store `absoluteUnixMs`, re-anchor later.** `StravaGpsPoint` carries the raw wall-clock millisecond from the GPX `<time>` element (`absoluteUnixMs = new Date(timeStr).getTime()`). After the GoPro video finishes parsing, `onFileSelected()` recomputes every Strava point's `.t`:
+
+```typescript
+const videoStartMs = result.videoStartEpoch * 1000;
+this.stravaGps.update(pts => pts.map(p => ({
+  ...p,
+  t:               p.absoluteUnixMs - videoStartMs,
+  relativeTimeSec: (p.absoluteUnixMs - videoStartMs) / 1000,
+})));
+```
+
+`absoluteUnixMs` is written once from the GPX and never recomputed. Both load orders (GPX-first, video-first) converge to correct `.t` values.
+
+**Temporal clip.** Strava activities are typically full rides (1–3 hours); GoPro clips are a few minutes. `drawVectorMap()` filters the array to points with `0 ≤ t ≤ videoDurationMs` before building any geometry. The map bounding box is computed from the clipped points, so the projection fills the map widget with only the in-video portion rather than compressing the relevant segment to a few pixels.
+
+**Path2D caching.** Building a path by iterating N points in every 60 Hz frame is O(N) per frame. `drawVectorMap()` builds a `Path2D` object once on cache miss and calls `ctx.stroke(path2D)` — one native call with no array iteration — in the hot path. The cache key `{ width, srcLen, srcT0, durationMs }` detects canvas resize, new data, re-anchored timestamps, and new video loads.
+
+**Zoom slider.** A `1×`–`8×` ZOOM slider is exposed in the header alongside the BG ALPHA control. Zoom is implemented with a canvas transform, not a map library call:
+
+```
+ctx.translate(dotX, dotY)   → ctx.scale(zoom) → ctx.translate(-dotX, -dotY)
+```
+
+This pins the current position dot while the route scales around it. `ctx.clip()` to the map box rectangle prevents the zoomed path from bleeding into the speed bar or G-force bar.
+
+---
+
 ### Pillar 3 — The Ride Library (Spring Boot 3 + PostgreSQL)
 
 The persistence layer enforces a hard data boundary: **heavy arrays never leave the browser**.
@@ -97,26 +130,47 @@ The write-through flow executes in strict order after every successful parse: WA
 ## Data Flow
 
 ```
-User selects GoPro MP4
-        │
-        ▼
- Mp4DemuxerService          Streams file in 1 MB chunks via mp4box.
- (Angular, main thread)     Extracts only the GPMD binary track (~1–5 MB).
-        │                   Video/audio mdat bytes are never materialised.
-        ▼
- gpmf-parser.worker.ts      Ephemeral Web Worker.
- + gpmf.wasm                Instantiates TinyGo WASM, runs KLV walk + SCAL divide.
- (Worker thread)            Posts TelemetryResult JSON, then the worker is terminated.
-        │
-        ├──► TelemetryVaultService   Persists GPS9[], ACCL[], GRAV[] → IndexedDB
-        │    (await — must complete first)
-        │
-        └──► ClipApiService          POSTs ClipMetadataDto summary → Spring Boot
-             (fire-and-forget)       → PostgreSQL (Neon)
+                      ┌─────────────────────────────────────┐
+                      │ User selects GoPro MP4              │
+                      └──────────────┬──────────────────────┘
+                                     │
+                                     ▼
+                       Mp4DemuxerService (Angular)
+                       Streams 1 MB chunks via mp4box.
+                       Extracts only GPMD binary track (~1–5 MB).
+                       Video/audio mdat bytes never materialised.
+                                     │
+                                     ▼
+                       gpmf-parser.worker.ts + gpmf.wasm
+                       Ephemeral Web Worker; TinyGo WASM runs
+                       KLV walk + SCAL divide; worker is terminated.
+                                     │
+               ┌─────────────────────┴──────────────────────┐
+               │                                            │
+               ▼                                            ▼
+  TelemetryVaultService               ClipApiService (fire-and-forget)
+  GPS9[], ACCL[], GRAV[] → IndexedDB  ClipMetadataDto → Spring Boot
+  (awaited — must complete first)                      → PostgreSQL (Neon)
 
-At playback:
- requestAnimationFrame loop → binary search + interpolation → Canvas HUD
- requestVideoFrameCallback  → Ghost Canvas render → MediaRecorder → WebM export
+                    ┌──────────────────────────────────────┐
+                    │ User uploads Strava .gpx (optional)  │
+                    └──────────────┬───────────────────────┘
+                                   │
+                                   ▼
+                     StravaTelemetryService (DOMParser)
+                     Extracts lat/lon/ele/<time> from each <trkpt>.
+                     absoluteUnixMs = new Date(timeStr).getTime()
+                     t = absoluteUnixMs − videoStartEpoch × 1000
+                     If video not loaded yet: re-anchored in onFileSelected().
+
+At playback (source = GoPro or Strava):
+  requestAnimationFrame loop
+    → binary search + interpolation → Canvas HUD (speed, G-force, map dot)
+    → Path2D cache hit → ctx.stroke(path2D) [no array iteration]
+    → ctx.translate/scale zoom transform (1×–8×)
+
+At export:
+  requestVideoFrameCallback → Ghost Canvas render → MediaRecorder → WebM
 ```
 
 ---
@@ -147,9 +201,10 @@ vergaraverse-engine/
 │   └── src/
 │       ├── app/
 │       │   ├── core/
-│       │   │   ├── models/          # TelemetryResult, ClipMetadataDto interfaces
+│       │   │   ├── models/          # TelemetryResult, ClipMetadataDto, StravaGpsPoint interfaces
 │       │   │   ├── services/        # Mp4Demuxer, GpmfParser, TelemetryMath,
-│       │   │   │                    # ClipApiService, TelemetryVaultService
+│       │   │   │                    # ClipApiService, TelemetryVaultService,
+│       │   │   │                    # StravaTelemetryService (GPX → StravaGpsPoint[])
 │       │   │   ├── workers/         # gpmf-parser.worker.ts (WASM host)
 │       │   │   └── components/
 │       │   │       └── telemetry-overlay/  # Canvas HUD + WebM export
