@@ -39,6 +39,9 @@ export interface StravaGpsPoint {
   lat: number;
   lon: number;
   ele: number;            // metres
+  hr: number;             // beats per minute (0 if sensor absent)
+  cad: number;            // pedal RPM (0 if sensor absent)
+  speed: number;          // m/s derived from Haversine between adjacent points
   relativeTimeSec: number; // seconds from video start (pre-ms conversion, kept for debugging)
   absoluteUnixMs: number; // wall-clock ms from the GPX <time> element — survives re-anchoring
 }

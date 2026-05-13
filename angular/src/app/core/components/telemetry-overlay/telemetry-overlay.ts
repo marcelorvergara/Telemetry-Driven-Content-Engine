@@ -28,6 +28,10 @@ const PEAK_DECAY_PER_FRAME = 0.003;
 const EXPORT_W = 1920;
 const EXPORT_H = 1080;
 
+// GPS multipath noise floor — same value as TelemetryMathService.SPEED_FLOOR_MS.
+// Applied to Strava-derived speed so the display behaviour is consistent across sources.
+const SPEED_FLOOR_MS = 8.0 / 3.6;
+
 interface LayoutAnchors {
   speedX: number;
   gfBarX: number;
@@ -159,27 +163,43 @@ export class TelemetryOverlay implements OnDestroy {
     const onFrame = (_now: DOMHighResTimeStamp, _meta: unknown): void => {
       if (!this.isExporting()) return;
 
-      const theme   = this.themeService.currentTheme();
-      const anchors = this.resolveLayout(theme.layout, EXPORT_W, EXPORT_H);
+      const theme          = this.themeService.currentTheme();
+      const anchors        = this.resolveLayout(theme.layout, EXPORT_W, EXPORT_H);
+      const exportStrava   = this.stravaGps();
+      const exportUseStrava = this.telemetrySource() === 'Strava' && exportStrava.length > 0;
+      const exportRenderMs  = videoEl.currentTime * 1000 + this.syncOffsetMs();
+
+      // Recompute speed per export frame — video time advances frame-by-frame.
+      let exportSpeed = this.lastSpeed;
+      let exportBio: { hr: number; cad: number; ele: number; speed: number } | null = null;
+      if (exportUseStrava) {
+        exportBio   = this.interpolateBiometrics(exportStrava, exportRenderMs);
+        exportSpeed = exportBio ? Math.max(exportBio.speed, SPEED_FLOOR_MS) : 0;
+      }
 
       // Black background so the gauges are visible on Screen blend mode.
       ghostCtx.fillStyle = '#000000';
       ghostCtx.fillRect(0, 0, EXPORT_W, EXPORT_H);
-      this.drawSpeedReadout(ghostCtx, EXPORT_W, EXPORT_H, this.lastSpeed, theme, anchors);
+      this.drawSpeedReadout(ghostCtx, EXPORT_W, EXPORT_H, exportSpeed, theme, anchors);
       this.drawGForceBar(ghostCtx, EXPORT_W, EXPORT_H, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
 
       if (this.showMap()) {
         if (this.telemetrySource() === 'Strava') {
-          const stravaPoints = this.stravaGps();
-          if (stravaPoints.length > 0) {
-            const renderTimeMs = videoEl.currentTime * 1000 + this.syncOffsetMs();
-            this.drawVectorMap(ghostCtx, EXPORT_W, stravaPoints, renderTimeMs, theme, true);
+          if (exportStrava.length > 0) {
+            this.drawVectorMap(ghostCtx, EXPORT_W, exportStrava, exportRenderMs, theme, true);
           }
         } else {
           const exportTelemetry = this.telemetry();
           if (exportTelemetry && exportTelemetry.gps.length > 0) {
             this.drawVectorMap(ghostCtx, EXPORT_W, exportTelemetry.gps, videoEl.currentTime * 1000, theme, false);
           }
+        }
+      }
+
+      if (exportStrava.length > 0) {
+        if (!exportBio) exportBio = this.interpolateBiometrics(exportStrava, exportRenderMs);
+        if (exportBio) {
+          this.drawBiometrics(ghostCtx, EXPORT_W, EXPORT_H, exportBio.hr, exportBio.cad, exportBio.ele, theme);
         }
       }
 
@@ -259,7 +279,7 @@ export class TelemetryOverlay implements OnDestroy {
 
     const theme  = this.themeService.currentTheme();
     const nowMs  = performance.now();
-    const ctx     = this.ctx;
+    const ctx    = this.ctx;
     const videoEl = this.videoEl();
     const duration       = videoEl.duration;
     const currentTime    = videoEl.currentTime;
@@ -267,50 +287,67 @@ export class TelemetryOverlay implements OnDestroy {
 
     ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
 
-    // GPS speed: prefer locked samples (fix >= 2) with timestamp interpolation.
-    const gps = telemetry.gps;
+    const stravaPoints  = this.stravaGps();
+    const useStrava     = this.telemetrySource() === 'Strava' && stravaPoints.length > 0;
+    const renderTimeMs  = relativeTimeMs + this.syncOffsetMs();
+
+    // ── Speed ──────────────────────────────────────────────────────────────
+    // Strava mode: Haversine-derived 1 Hz speed, linearly interpolated.
+    // GoPro mode: 18 Hz GPS9 measured speed via TelemetryMathService.
     let speed = 0;
-    const lockedGPS = gps.filter(g => g.fix >= 2);
-    if (lockedGPS.length > 0) {
-      speed = this.math.getDisplaySpeed(lockedGPS, relativeTimeMs, nowMs);
-    } else if (gps.length > 0 && isFinite(duration) && duration > 0) {
-      const fIdx  = Math.max(0, Math.min(1, currentTime / duration)) * (gps.length - 1);
-      const lo    = Math.floor(fIdx);
-      const hi    = Math.min(lo + 1, gps.length - 1);
-      const alpha = fIdx - lo;
-      speed = gps[lo].speed2d + (gps[hi].speed2d - gps[lo].speed2d) * alpha;
+    let bio: { hr: number; cad: number; ele: number; speed: number } | null = null;
+
+    if (useStrava) {
+      bio   = this.interpolateBiometrics(stravaPoints, renderTimeMs);
+      speed = bio ? Math.max(bio.speed, SPEED_FLOOR_MS) : 0;
+    } else {
+      const gps       = telemetry.gps;
+      const lockedGPS = gps.filter(g => g.fix >= 2);
+      if (lockedGPS.length > 0) {
+        speed = this.math.getDisplaySpeed(lockedGPS, relativeTimeMs, nowMs);
+      } else if (gps.length > 0 && isFinite(duration) && duration > 0) {
+        const fIdx  = Math.max(0, Math.min(1, currentTime / duration)) * (gps.length - 1);
+        const lo    = Math.floor(fIdx);
+        const hi    = Math.min(lo + 1, gps.length - 1);
+        const alpha = fIdx - lo;
+        speed = gps[lo].speed2d + (gps[hi].speed2d - gps[lo].speed2d) * alpha;
+      }
     }
-    this.lastSpeed = speed; // cached for ghost canvas export frames
+    this.lastSpeed = speed;
 
-    const acclAtom = this.math.findClosestAtom(telemetry.accl, relativeTimeMs);
-    const rawG     = this.math.getDisplayGForce(acclAtom, nowMs);
+    // ── G-force ────────────────────────────────────────────────────────────
+    const rawG = this.math.getDisplayGForce(this.math.findClosestAtom(telemetry.accl, relativeTimeMs), nowMs);
 
-    // Spike instantly on impact above the threshold; ease smoothly otherwise.
     if (rawG > SPIKE_THRESHOLD && rawG > this.currentDisplayedGForce) {
       this.currentDisplayedGForce = rawG;
     } else {
       this.currentDisplayedGForce += (rawG - this.currentDisplayedGForce) * EASE_FACTOR;
     }
-
     if (rawG >= this.peakGForce) {
       this.peakGForce = rawG;
     } else {
       this.peakGForce = Math.max(this.peakGForce - PEAK_DECAY_PER_FRAME, 0);
     }
 
+    // ── Draw ───────────────────────────────────────────────────────────────
     const anchors = this.resolveLayout(theme.layout, this.canvasWidth, this.canvasHeight);
     this.drawSpeedReadout(ctx, this.canvasWidth, this.canvasHeight, speed, theme, anchors);
     this.drawGForceBar(ctx, this.canvasWidth, this.canvasHeight, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
 
     if (this.showMap()) {
       if (this.telemetrySource() === 'Strava') {
-        const stravaPoints = this.stravaGps();
         if (stravaPoints.length > 0) {
-          const renderTimeMs = currentTime * 1000 + this.syncOffsetMs();
           this.drawVectorMap(ctx, this.canvasWidth, stravaPoints, renderTimeMs, theme, true);
         }
-      } else if (gps.length > 0) {
-        this.drawVectorMap(ctx, this.canvasWidth, gps, relativeTimeMs, theme, false);
+      } else if (telemetry.gps.length > 0) {
+        this.drawVectorMap(ctx, this.canvasWidth, telemetry.gps, relativeTimeMs, theme, false);
+      }
+    }
+
+    if (stravaPoints.length > 0) {
+      if (!bio) bio = this.interpolateBiometrics(stravaPoints, renderTimeMs);
+      if (bio) {
+        this.drawBiometrics(ctx, this.canvasWidth, this.canvasHeight, bio.hr, bio.cad, bio.ele, theme);
       }
     }
   }
@@ -372,6 +409,44 @@ export class TelemetryOverlay implements OnDestroy {
       blur:  6 + t * 42,
       color: t > 0.5 ? theme.colors.secondary : theme.colors.primary,
     };
+  }
+
+  // ── Biometric interpolation ──────────────────────────────────────────────
+  // Linear interpolation of hr/cad/ele from the 1 Hz Strava point array.
+  // Returns null only when the array is empty.
+
+  private interpolateBiometrics(
+    points: StravaGpsPoint[],
+    renderTimeMs: number,
+  ): { hr: number; cad: number; ele: number; speed: number } | null {
+    if (points.length === 0) return null;
+
+    let lo = 0, hi = points.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >>> 1;
+      if (points[mid].t <= renderTimeMs) { lo = mid; } else { hi = mid - 1; }
+    }
+    const hiIdx = Math.min(lo + 1, points.length - 1);
+    const loP   = points[lo];
+    const hiP   = points[hiIdx];
+    const dt    = hiP.t - loP.t;
+    const a     = dt > 0 ? Math.max(0, Math.min(1, (renderTimeMs - loP.t) / dt)) : 0;
+
+    return {
+      hr:    Math.round(loP.hr    + (hiP.hr    - loP.hr)    * a),
+      cad:   Math.round(loP.cad   + (hiP.cad   - loP.cad)   * a),
+      ele:   loP.ele   + (hiP.ele   - loP.ele)   * a,
+      speed: loP.speed + (hiP.speed - loP.speed) * a,
+    };
+  }
+
+  // Returns the HUD colour for a heart rate value according to training zones.
+  private hrColor(hr: number, theme: ThemeConfig): string {
+    if (hr === 0)   return theme.colors.text;
+    if (hr < 100)   return theme.colors.success;
+    if (hr < 140)   return theme.colors.primary;
+    if (hr < 160)   return theme.colors.warning;
+    return theme.colors.danger;
   }
 
   // ── Hex → rgba helper ────────────────────────────────────────────────────
@@ -547,6 +622,178 @@ export class TelemetryOverlay implements OnDestroy {
     }
 
     ctx.shadowBlur = 0;
+  }
+
+  // ── Biometric HUD panel ──────────────────────────────────────────────────
+  // Renders HR / CAD / ELE in a layout-specific style.  All three themes use
+  // the same data but differ in position, typography, and decoration.
+
+  private drawBiometrics(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    hr: number,
+    cad: number,
+    ele: number,
+    theme: ThemeConfig,
+  ): void {
+    const hrCol = this.hrColor(hr, theme);
+
+    // ── tiktok-cover: solid block stack above the speed/G-force column ───
+    if (theme.layout === 'tiktok-cover') {
+      const margin   = 16;
+      const stripeW  = 8;
+      const gap      = 4;
+      const boxLeft  = margin + stripeW + gap;
+      const boxW     = Math.round(width * 0.18);
+      const gfBarY   = Math.round(height * 0.80);
+      const speedBoxH = Math.round(height * 0.09);
+      const bioBoxH   = Math.round(height * 0.055);
+      const labelPx   = Math.max(8, Math.round(bioBoxH * 0.38));
+      const valuePx   = Math.max(9, Math.round(bioBoxH * 0.55));
+      const speedBoxY = gfBarY - speedBoxH;
+
+      const boxes: Array<{ label: string; value: string; fill: string }> = [
+        { label: 'ELE', value: `${ele.toFixed(1)} m`,  fill: theme.colors.accent },
+        { label: 'CAD', value: `${cad} RPM`,           fill: theme.colors.primary },
+        { label: 'HR',  value: `${hr} BPM`,            fill: hrCol },
+      ];
+
+      // Draw from top down: ELE → CAD → HR (HR is closest to speed box)
+      boxes.forEach(({ label, value, fill }, i) => {
+        const boxY = speedBoxY - (boxes.length - i) * bioBoxH;
+        ctx.fillStyle = fill;
+        ctx.fillRect(boxLeft, boxY, boxW, bioBoxH);
+
+        ctx.fillStyle    = '#FFFFFF';
+        ctx.textBaseline = 'middle';
+        const midY       = boxY + bioBoxH * 0.5;
+
+        ctx.font = `${labelPx}px ${theme.font.primary}`;
+        ctx.fillText(label, boxLeft + 8, midY);
+
+        ctx.font = `bold ${valuePx}px ${theme.font.primary}`;
+        const labelW = ctx.measureText(label + '  ').width;
+        ctx.fillText(value, boxLeft + 8 + labelW, midY);
+      });
+
+      // Coloured left-stripe covering all bio boxes
+      const bioTotalH = boxes.length * bioBoxH;
+      const bioTopY   = speedBoxY - bioTotalH;
+      const stripeH   = Math.floor(bioTotalH / 3);
+      [theme.colors.secondary, theme.colors.success, theme.colors.warning].forEach((c, i) => {
+        ctx.fillStyle = c;
+        ctx.fillRect(margin, bioTopY + i * stripeH, stripeW, stripeH);
+      });
+
+      ctx.shadowBlur = 0;
+      return;
+    }
+
+    // ── stacked (CLEAN_SPORT): clean right-side vertical panel ───────────
+    if (theme.layout === 'stacked') {
+      const rowH    = Math.max(22, Math.round(height * 0.042));
+      const bigPx   = Math.max(13, Math.round(height * 0.032));
+      const labPx   = Math.max(8,  Math.round(height * 0.020));
+      const panW    = Math.round(width * 0.14);
+      const panX    = width - panW - 24;
+      const panBotY = height - 16;
+
+      const rows: Array<{ icon: string; value: string; unit: string; color: string }> = [
+        { icon: '▲', value: ele.toFixed(1), unit: 'm',   color: theme.colors.accent },
+        { icon: '↺', value: String(cad),    unit: 'rpm', color: theme.colors.text },
+        { icon: '♥', value: String(hr),     unit: 'bpm', color: hrCol },
+      ];
+
+      rows.forEach(({ icon, value, unit, color }, i) => {
+        const rowY = panBotY - i * rowH - rowH * 0.35;
+
+        ctx.save();
+        ctx.textBaseline = 'middle';
+
+        // Accent icon label
+        ctx.font      = `${labPx}px ${theme.font.primary}`;
+        ctx.fillStyle = theme.colors.accent;
+        ctx.fillText(icon, panX, rowY);
+
+        // Bold value in zone colour
+        ctx.font      = `bold ${bigPx}px ${theme.font.primary}`;
+        ctx.fillStyle = color;
+        ctx.fillText(value, panX + labPx + 6, rowY);
+
+        // Small unit
+        const valW  = ctx.measureText(value).width;
+        ctx.font    = `${labPx}px ${theme.font.primary}`;
+        ctx.fillStyle = theme.colors.text;
+        ctx.globalAlpha = 0.7;
+        ctx.fillText(unit, panX + labPx + 6 + valW + 4, rowY);
+        ctx.globalAlpha = 1.0;
+
+        ctx.restore();
+      });
+
+      // Thin separator line above the panel
+      const sepY = panBotY - rows.length * rowH - 4;
+      ctx.save();
+      ctx.strokeStyle = theme.colors.accent;
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth   = 1;
+      ctx.beginPath();
+      ctx.moveTo(panX, sepY);
+      ctx.lineTo(panX + panW, sepY);
+      ctx.stroke();
+      ctx.restore();
+
+      return;
+    }
+
+    // ── spread (VERGARA_YOUTUBE): cyberpunk glowing top-left panel ────────
+    {
+      const rowH  = Math.max(28, Math.round(height * 0.048));
+      const bigPx = Math.max(14, Math.round(height * 0.036));
+      const labPx = Math.max(9,  Math.round(height * 0.022));
+      const panX  = 16;
+      const panY  = 16;
+
+      const iconColW = Math.round(labPx * 1.4);
+      const valColW  = Math.round(bigPx * 3.0);
+
+      const rows: Array<{ icon: string; value: string; unit: string; color: string }> = [
+        { icon: '♥', value: String(hr),     unit: 'BPM', color: hrCol },
+        { icon: '↺', value: String(cad),    unit: 'RPM', color: theme.colors.primary },
+        { icon: '▲', value: ele.toFixed(1), unit: 'M',   color: theme.colors.accent },
+      ];
+
+      rows.forEach(({ icon, value, unit, color }, i) => {
+        const y = panY + i * rowH + rowH * 0.55;
+
+        ctx.save();
+        ctx.textBaseline = 'middle';
+        ctx.shadowColor  = color;
+        ctx.shadowBlur   = 10;
+        ctx.fillStyle    = color;
+
+        // Icon (right-aligned in narrow column)
+        ctx.textAlign = 'right';
+        ctx.font = `${labPx}px ${theme.font.primary}`;
+        ctx.fillText(icon, panX + iconColW, y);
+
+        // Value (right-aligned in value column)
+        ctx.textAlign = 'right';
+        ctx.font = `bold ${bigPx}px ${theme.font.primary}`;
+        ctx.fillText(value, panX + iconColW + valColW, y);
+
+        // Unit (left-aligned, dimmed)
+        ctx.textAlign   = 'left';
+        ctx.font        = `${labPx}px ${theme.font.primary}`;
+        ctx.shadowBlur  = 4;
+        ctx.globalAlpha = 0.7;
+        ctx.fillText(unit, panX + iconColW + valColW + 5, y);
+        ctx.globalAlpha = 1.0;
+
+        ctx.restore();
+      });
+    }
   }
 
   // ── Vector map ───────────────────────────────────────────────────────────

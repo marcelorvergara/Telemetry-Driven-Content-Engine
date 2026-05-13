@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem -Recurse -Path \"c:\\\\Users\\\\Pichau\\\\Projetos\\\\Telemetry-Driven Content Engine\\\\angular\\\\\" -Directory | Select-Object -ExpandProperty FullName | Sort-Object | head -100)",
-      "Bash(npx ng *)"
+      "Bash(npx ng *)",
+      "PowerShell(cd \"c:\\\\Users\\\\Pichau\\\\Projetos\\\\Telemetry-Driven Content Engine\\\\angular\"; Get-ChildItem -Depth 2 | Where-Object { $_.PSIsContainer } | ForEach-Object { $_.Name })"
     ]
   }
 }
