@@ -55,7 +55,7 @@ Do not switch this to an Observable or an `effect()`.
 
 `resolveLayout(layout, width, height)` returns a `LayoutAnchors` struct (`{ speedX, gfBarX, gfBarY }`) computed once per frame. Both `drawSpeedReadout` and `drawGForceBar` consume the same struct — no drawing code duplicates coordinate arithmetic.
 
-`drawSpeedReadout` and `drawGForceBar` use **early-return branching** on `theme.layout`. Each layout variant is a fully isolated code path:
+`drawSpeedReadout`, `drawGForceBar`, and `drawBiometrics` use **early-return branching** on `theme.layout`. Each layout variant is a fully isolated code path:
 
 | Layout | Visual style | Code path |
 |---|---|---|
@@ -63,7 +63,9 @@ Do not switch this to an Observable or an `effect()`.
 | `stacked` | Same glow style; both elements left-aligned at 75% height | Default (fallthrough) |
 | `tiktok-cover` | Solid `fillRect` geometry, no `shadowBlur`, flat opaque colour blocks + three-colour branding stripe | Early-return branch |
 
-**The `tiktok-cover` constraint**: this layout never sets `shadowBlur > 0`. The three-colour branding stripe (secondary / success / warning) is drawn in `drawSpeedReadout` — do not move it to `drawGForceBar`.
+**The `tiktok-cover` constraint**: this layout never sets `shadowBlur > 0`. The three-colour branding stripe (secondary / success / warning) is drawn in `drawSpeedReadout` — do not move it to `drawGForceBar`. The `drawBiometrics` tiktok-cover branch draws its own stripe segments for the three bio boxes (ELE / CAD / HR) that are visually continuous with the `drawSpeedReadout` stripe.
+
+**Three functions share the same layout contract**: `drawSpeedReadout`, `drawGForceBar`, and `drawBiometrics`. Adding a new layout variant requires a branch in all three. Omitting one produces a layout that works for speed and G-force but falls back to `spread` rendering for the bio panel.
 
 **Context-leak guard**: every layout branch must end with `ctx.shadowBlur = 0` before returning. Canvas context state is persistent across frames; failing to reset it produces cumulative visual corruption.
 

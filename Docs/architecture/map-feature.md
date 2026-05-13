@@ -87,12 +87,17 @@ export interface StravaGpsPoint {
   lat: number;
   lon: number;
   ele: number;             // metres
+  hr: number;              // beats per minute (0 if sensor absent)
+  cad: number;             // wrist-derived RPM (0 at stops — valid)
+  speed: number;           // m/s, Haversine-derived at parse time
   relativeTimeSec: number; // seconds from video start (for debugging)
   absoluteUnixMs: number;  // wall-clock ms from GPX <time> element — survives re-anchoring
 }
 ```
 
 The `fix` field is absent. The GPS Fix Fallback Rule (`p.fix === undefined || p.fix >= 2`) handles this transparently.
+
+`hr`, `cad`, and `speed` are used by `drawBiometrics()` and the speed substitution path — they are irrelevant to map rendering but share the same array to avoid separate lookup structures. See [strava-biometrics.md](strava-biometrics.md) for the full biometrics architecture.
 
 ---
 

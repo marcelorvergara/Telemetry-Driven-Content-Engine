@@ -66,13 +66,57 @@ The parser owns the SCAL divide and emits physical units. Angular receives only 
 
 ### Sensor Scope (MVP)
 
-| Sensor | Tag | Status |
+| Sensor | Tag / Source | Status |
 |---|---|---|
-| GPS (Hero 11+) | `GPS9` | In scope — primary |
+| GPS (Hero 11+) | `GPS9` | In scope — primary GoPro GPS |
 | GPS (Hero 10 and older) | `GPS5` | In scope — fallback when no GPS9 |
 | Accelerometer | `ACCL` | In scope — Slam Detector |
 | Gravity vector | `GRAV` | In scope — Slam Detector |
+| Heart rate | Strava GPX `gpxtpx:hr` | In scope — displayed on HUD when GPX loaded |
+| Cadence (wrist) | Strava GPX `gpxtpx:cad` | In scope — 0 at stops is valid hardware behaviour |
+| Elevation | Strava GPX `<ele>` | In scope — metres, displayed on HUD when GPX loaded |
 | Camera/image orientation | `CORI`/`IORI` | Out of scope for MVP |
+
+**Strava cadence note:** The Amazfit TRex 3 derives cadence from wrist accelerometer, not a crank sensor. Zero-cadence readings at stops (~2.3% of records observed) are legitimate — do not treat them as sensor errors.
+
+### Strava Biometrics — Speed Substitution
+
+When `telemetrySource === 'Strava'` **and** `stravaGps.length > 0`:
+- Speed displayed on the HUD is `interpolateBiometrics().speed` clamped to `SPEED_FLOOR_MS`.
+- The GoPro GPS9 `speed2d` field is **not used** for the speed readout.
+- Switching back to `'GoPro'` source reverts to GPS9 speed immediately.
+
+When `telemetrySource === 'GoPro'` or no GPX file is loaded:
+- Speed is sourced exclusively from `interpolateSpeed(telemetry.gps, timeMs)` (GPS9 path).
+
+**G-force bar is always rendered** regardless of `telemetrySource`. The ACCL stream is a GoPro-only sensor; a Strava GPX file never carries accelerometer data. Never suppress `drawGForceBar()` based on source selection.
+
+`SPEED_FLOOR_MS = 8.0 / 3.6` applies to **both** GoPro GPS9 and Strava Haversine-derived speed. The floor is a hardware noise floor, not a GoPro-specific one.
+
+### Strava Biometrics — HR Training Zones
+
+`hrColor(hr, theme)` maps heart rate to theme colours:
+
+| Zone | BPM range | Color source |
+|---|---|---|
+| Recovery | < 100 | `theme.colors.success` |
+| Aerobic | 100 – 139 | `theme.colors.primary` |
+| Threshold | 140 – 159 | `theme.colors.warning` |
+| Anaerobic | ≥ 160 | `theme.colors.danger` |
+
+These zone boundaries are fixed. Do not adjust them per-theme.
+
+### Strava Biometrics — `drawBiometrics()` Layout Contract
+
+`drawBiometrics()` has one branch per layout, exactly mirroring `drawSpeedReadout()` and `drawGForceBar()`:
+
+| Layout | Visual style |
+|---|---|
+| `spread` | Top-left glowing panel, right-aligned value columns, icon + value + dimmed unit |
+| `stacked` | Bottom-right clean panel, accent icons, no glow, thin separator line |
+| `tiktok-cover` | Three solid blocks (ELE / CAD / HR) above the speed box; colored left stripe matches branding stripe |
+
+Any new layout variant **must** add a branch to `drawBiometrics()` — see Skill 11.
 
 ### Error Codes
 `ErrSuccess=0`, `ErrMalformedGPMF=1`, `ErrMemLimit=2`, `ErrNoSupportedStream=3`. No silent truncations — every malformed-length condition returns `ErrMalformedGPMF` immediately.
@@ -116,7 +160,7 @@ map: { backgroundAlpha: number; strokeWidth: number; showGrid: boolean; }
 
 ### Sensor Noise Floors — Do Not Lower
 - **ACCL deadzone**: readings < **0.25 G** are indistinguishable from MEMS noise. Set in `calculateGForceMagnitude`.
-- **GPS speed floor**: `SPEED_FLOOR_MS = 8.0 / 3.6` (~2.22 m/s). Applied at all 4 return paths in `interpolateSpeed`.
+- **GPS speed floor**: `SPEED_FLOOR_MS = 8.0 / 3.6` (~2.22 m/s). Applied at all 4 return paths in `interpolateSpeed` **and** to Strava Haversine-derived speed in `drawFrame()`.
 - These are hardware facts, not display preferences. A theme change must never affect whether a ghost reading is suppressed.
 - See [Sensor Deadzones](Docs/architecture/sensor-deadzones.md) for empirical rationale.
 
@@ -132,6 +176,7 @@ Detailed rules, rationale, and constraints for each subsystem live in dedicated 
 | Backend — Spring Boot + PostgreSQL (Sprint 4) | [Docs/architecture/backend.md](Docs/architecture/backend.md) |
 | Theme engine — Canvas strategy (Sprint 5) | [Docs/architecture/theme-engine.md](Docs/architecture/theme-engine.md) |
 | Map feature — Canvas vector, Strava GPX, Path2D cache, zoom (Sprint 6+) | [Docs/architecture/map-feature.md](Docs/architecture/map-feature.md) |
+| Strava biometrics — HR/CAD/ELE HUD, speed substitution, zone colours | [Docs/architecture/strava-biometrics.md](Docs/architecture/strava-biometrics.md) |
 | Sensor noise floors — hardware realities | [Docs/architecture/sensor-deadzones.md](Docs/architecture/sensor-deadzones.md) |
 
 ---

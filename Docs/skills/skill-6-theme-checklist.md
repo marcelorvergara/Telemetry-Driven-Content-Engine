@@ -20,7 +20,7 @@
 
 - [ ] Add the literal string to the `layout` union type in `ThemeConfig`.
 - [ ] Add a `case` to `resolveLayout` returning a valid `LayoutAnchors`. Round all computed pixel values — never pass floating-point coordinates to `fillRect` / `fillText`.
-- [ ] Add an early-return branch in **both** `drawSpeedReadout` and `drawGForceBar`. Each branch must be self-contained and end with `ctx.shadowBlur = 0; return;` to prevent context state from leaking into the next frame.
+- [ ] Add an early-return branch in **all three** of `drawSpeedReadout`, `drawGForceBar`, and `drawBiometrics`. Each branch must be self-contained and end with `ctx.shadowBlur = 0; return;`.
 - [ ] Do not modify the `default:` / `spread` path when adding a new layout. The `spread` layout is the reference rendering and must remain untouched.
 
 ---

@@ -33,6 +33,8 @@ This constant is applied at **all four return paths** in `interpolateSpeed`:
 
 Any refactor that adds a new return path must apply the same floor.
 
+**Also applied to Strava-derived speed**: when `telemetrySource === 'Strava'`, `drawFrame()` clamps the Haversine speed from `interpolateBiometrics()` using the same constant — `Math.max(bio.speed, SPEED_FLOOR_MS)`. Multipath GPS drift affects Strava 1 Hz data for the same hardware reason it affects GoPro GPS9.
+
 ---
 
 ## Why These Are Not Tunable Per-Theme
