@@ -42,10 +42,6 @@ export class StravaTelemetryService {
     }
     if (data.length > 1) data[0].speed = data[1].speed;
 
-    console.log(
-      '[Task 2 Complete] GPX Parser: Extracted', data.length,
-      'points. First point relative time:', data[0]?.relativeTimeSec,
-    );
     return data;
   }
 

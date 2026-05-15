@@ -65,7 +65,7 @@ export class TelemetryOverlay implements OnDestroy {
   private rafId = 0;
   private canvasWidth  = 0;
   private canvasHeight = 0;
-  private _lastMapLogTime = 0;
+
 
   private _path2DCache: {
     path2D: Path2D;
@@ -886,10 +886,6 @@ export class TelemetryOverlay implements OnDestroy {
         bounds: { minLat, maxLat, minLon, maxLon },
         cacheKey: { width, srcLen: base.length, srcT0: base[0].t, durationMs },
       };
-      console.log(
-        `[Map Path2D] Cached ${clipped.length} pts` +
-        ` (clipped from ${base.length}, duration=${durationMs}ms, width=${width})`,
-      );
     }
 
     const { path2D, clippedPoints, bounds: { minLat, maxLat, minLon, maxLon } } = this._path2DCache!;
@@ -921,18 +917,6 @@ export class TelemetryOverlay implements OnDestroy {
       const lon   = loP.lon + (hiP.lon - loP.lon) * alpha;
       [dotX, dotY] = this.projectLatLon(lat, lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
 
-      const now = performance.now();
-      if (now - this._lastMapLogTime > 1000) {
-        this._lastMapLogTime = now;
-        const zoom      = this.mapZoom();
-        const videoTime = (renderTimeMs - this.syncOffsetMs()) / 1000;
-        console.log(
-          '[Task 4 Complete] Render Loop: Interpolated coords at video time', videoTime,
-          'with offset', this.syncOffsetMs(),
-          zoom > 1 ? `| ctx.scale(${zoom}×) active — no per-frame array iteration` : '| zoom 1×',
-          '->', { lat, lon },
-        );
-      }
     } else {
       const atom = this.math.findClosestAtom(clippedPoints, renderTimeMs);
       if (atom) {

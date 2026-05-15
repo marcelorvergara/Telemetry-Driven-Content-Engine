@@ -84,10 +84,6 @@ export class AppComponent implements OnInit, OnDestroy {
       const metBytes = new Uint8Array(binBuffer);
       const result = await this.parser.parse(metBytes, SHOWCASE_VIDEO_START_SEC);
       this.telemetry.set(result);
-      console.log(
-        `[AUTO-LOAD] TelemetryResult: ${result.gps.length} GPS atoms,` +
-        ` ${result.accl.length} ACCL atoms, ${result.grav.length} GRAV atoms`,
-      );
 
       await this.vault.save('tiny_showcase.mp4', 0, result);
 
@@ -134,10 +130,6 @@ export class AppComponent implements OnInit, OnDestroy {
       // Reads the file in 1 MB chunks; only the telemetry track bytes accumulate
       // in memory (~1–5 MB). Video/audio mdat bytes are never materialised.
       const { metBytes, videoStartSec } = await this.demuxer.extract(file);
-      console.log(
-        `[DEMUXER] GPMD track extracted: ${metBytes.byteLength} bytes,` +
-        ` videoStartSec=${videoStartSec}`,
-      );
 
       // Stage 2 — Ephemeral Worker: send the flat Uint8Array to Go-WASM.
       // The worker instantiates a clean gpmf.wasm, runs manual BigEndian
@@ -156,11 +148,6 @@ export class AppComponent implements OnInit, OnDestroy {
           relativeTimeSec: (p.absoluteUnixMs - videoStartMs) / 1000,
         })));
       }
-      console.log(
-        `[PARSER] TelemetryResult: ${result.gps.length} GPS atoms,` +
-        ` ${result.accl.length} ACCL atoms,` +
-        ` ${result.grav.length} GRAV atoms`,
-      );
 
       // Stage 3 — Vault write: persist heavy arrays to IndexedDB.
       // Must complete before the Library POST — if the POST succeeds but the
@@ -221,14 +208,10 @@ export class AppComponent implements OnInit, OnDestroy {
 
   setTelemetrySource(source: 'GoPro' | 'Strava'): void {
     this.telemetrySource.set(source);
-    const activeDataset = source === 'GoPro' ? (this.telemetry()?.gps ?? []) : this.stravaGps();
-    console.log('[Task 1 Complete] UI: Telemetry source changed to:', source, '| Offset:', this.syncOffsetMs());
-    console.log('[Task 3 Complete] State: Active dataset mapped. Source:', source, '| Data points:', activeDataset.length);
   }
 
   onSyncOffsetChange(offsetMs: number): void {
     this.syncOffsetMs.set(offsetMs);
-    console.log('[Task 1 Complete] UI: Telemetry source changed to:', this.telemetrySource(), '| Offset:', offsetMs);
   }
 
   async onGpxSelected(event: Event): Promise<void> {
@@ -241,9 +224,6 @@ export class AppComponent implements OnInit, OnDestroy {
     const videoStartSec = this.telemetry()?.videoStartEpoch ?? 0;
     const data = await this.stravaService.parseGpx(file, videoStartSec);
     this.stravaGps.set(data);
-    const currentSource = this.telemetrySource();
-    const activeDataset = currentSource === 'GoPro' ? (this.telemetry()?.gps ?? []) : data;
-    console.log('[Task 3 Complete] State: Active dataset mapped. Source:', currentSource, '| Data points:', activeDataset.length);
   }
 
   formatTime(ms: number): string {
