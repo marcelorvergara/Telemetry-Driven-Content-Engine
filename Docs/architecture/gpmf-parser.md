@@ -103,6 +103,72 @@ Forbidden inside WASM exports: `fmt.Sprintf` in rAF-adjacent hot paths (heap all
 
 ---
 
+## Showcase Split-Asset Strategy — Demuxer Bypass
+
+### Why the split exists
+
+FFmpeg reconstructs the MP4 container when transcoding. In doing so it drops the proprietary `gpmd` track tag that GoPro embeds in the original file. `Mp4DemuxerService` locates the GPMF telemetry track by searching for this FourCC in the container header. When it is absent the demuxer returns 0 bytes, and `GpmfParserService.parse()` has nothing to decode.
+
+Solution: keep video and telemetry in separate files. The compressed `tiny_showcase.mp4` feeds the `<video>` element only. The raw GPMF binary `telemetry_sample.bin` is extracted once from the original GoPro file and served as a static asset.
+
+### How to extract `telemetry_sample.bin`
+
+Load the **original, uncompressed** GoPro MP4 in the live app. The demuxer logs:
+
+```
+[DEMUXER] GPMD track extracted: NNNNN bytes, videoStartSec=NNNN
+```
+
+Copy that `videoStartSec` value — it is the Unix epoch (seconds) of the clip's first frame. The binary is also available programmatically: at parse time `metBytes` is the exact `Uint8Array` to write to disk. During development, temporarily add:
+
+```typescript
+const blob = new Blob([metBytes], { type: 'application/octet-stream' });
+const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+a.download = 'telemetry_sample.bin'; a.click();
+```
+
+Remove this snippet before committing — it is diagnostic only.
+
+### `loadDefaultAssets()` parse path
+
+```typescript
+// 1. Fetch both assets in parallel.
+const [binBuffer, gpxBlob] = await Promise.all([
+  firstValueFrom(http.get('assets/telemetry_sample.bin', { responseType: 'arraybuffer' })),
+  firstValueFrom(http.get('assets/strava%2010052026.gpx', { responseType: 'blob' })),
+]);
+
+// 2. Bypass demuxer — feed the raw binary directly to WASM.
+const metBytes = new Uint8Array(binBuffer);
+const result = await parser.parse(metBytes, SHOWCASE_VIDEO_START_SEC);
+this.telemetry.set(result);   // videoStartEpoch is now set
+
+// 3. Process GPX AFTER telemetry is set (anchoring depends on videoStartEpoch).
+const gpxFile = new File([gpxBlob], 'strava 10052026.gpx', { type: 'application/gpx+xml' });
+await this.processGpxFile(gpxFile);
+```
+
+Step 3 must never precede step 2. `processGpxFile` reads `this.telemetry()?.videoStartEpoch` to anchor Strava `.t` values. If it runs first, `videoStartEpoch` is `undefined` → defaults to `0` → all Strava timestamps become absolute Unix ms (~1.7 T ms) → every `interpolateBiometrics()` call returns `null`.
+
+### Deriving `SHOWCASE_VIDEO_START_SEC`
+
+`SHOWCASE_VIDEO_START_SEC` is declared at module level in `app.ts`. Its value is:
+
+```
+SHOWCASE_VIDEO_START_SEC = original_videoStartSec + clip_start_offset_seconds
+```
+
+| Parameter | How to get it |
+|---|---|
+| `original_videoStartSec` | `[DEMUXER]` log line when loading the uncompressed original in the app |
+| `clip_start_offset_seconds` | Seconds from the original file's start to where `tiny_showcase.mp4` begins |
+
+Current value: `1778407717` = `1778407657` (GX011209.MP4) + `60` (clip starts at 1:00).
+
+If the showcase video is replaced, repeat this derivation and update the constant. A wrong value shifts all GPS `.t` timestamps by the error amount — GoPro speed interpolation will return wrong atoms and Strava anchoring will be completely misaligned.
+
+---
+
 ## Sprint 1 Decisions That Survived Grilling
 
 - GPS9-primary / GPS5-fallback split

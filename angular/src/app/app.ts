@@ -1,4 +1,6 @@
 import { Component, OnDestroy, OnInit, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
 import { TelemetryResult, StravaGpsPoint } from './core/models/telemetry.model';
 import { ClipMetadataDto } from './core/models/clip.model';
 import { Mp4DemuxerService } from './core/services/mp4-demuxer';
@@ -10,6 +12,11 @@ import { StravaTelemetryService } from './core/services/strava-telemetry.service
 import { TelemetryOverlay } from './core/components/telemetry-overlay/telemetry-overlay';
 import { ThemeService } from './core/services/theme.service';
 import { ALL_THEMES } from './core/models/theme.model';
+
+// Unix epoch (seconds) of the exact moment tiny_showcase.mp4 starts recording.
+// Extracted once from the original GX011209.MP4 via the demuxer's videoStartSec
+// output — replace [PLACEHOLDER] with that value before deploying.
+const SHOWCASE_VIDEO_START_SEC = 1778407717; // videoStartSec of GX011209.MP4 (1778407657) + 60 s clip offset
 
 interface FeedEntry {
   t: number;        // ms from video start
@@ -26,7 +33,7 @@ interface FeedEntry {
 })
 export class AppComponent implements OnInit, OnDestroy {
   readonly telemetry    = signal<TelemetryResult | null>(null);
-  readonly videoSrc     = signal<string>('/assets/sample.mp4');
+  readonly videoSrc     = signal<string>('assets/tiny_showcase.mp4');
   readonly isProcessing = signal<boolean>(false);
   readonly feedEntries  = signal<FeedEntry[]>([]);
   readonly library      = signal<ClipMetadataDto[]>([]);
@@ -49,10 +56,9 @@ export class AppComponent implements OnInit, OnDestroy {
     private readonly vault:          TelemetryVaultService,
     private readonly stravaService:  StravaTelemetryService,
     readonly         themeService:   ThemeService,
+    private readonly http:           HttpClient,
   ) {}
 
-  // Load the Library from PostgreSQL on app start. Failure is non-fatal —
-  // the user can still parse new clips; the Library just starts empty.
   ngOnInit(): void {
     this.clipApi.getAll().subscribe({
       next:  clips => this.library.set(
@@ -60,12 +66,61 @@ export class AppComponent implements OnInit, OnDestroy {
       ),
       error: err => console.warn('[API] GET /api/clips failed:', err),
     });
+    this.loadDefaultAssets();
+  }
+
+  private async loadDefaultAssets(): Promise<void> {
+    this.telemetrySource.set('Strava');
+    this.isProcessing.set(true);
+    this.videoSrc.set('assets/tiny_showcase.mp4');
+
+    try {
+      const [binBuffer, gpxBlob] = await Promise.all([
+        firstValueFrom(this.http.get('assets/telemetry_sample.bin', { responseType: 'arraybuffer' })),
+        firstValueFrom(this.http.get('assets/strava%2010052026.gpx', { responseType: 'blob' })),
+      ]);
+
+      // Bypass the demuxer — feed the pre-extracted GPMF binary directly to WASM.
+      const metBytes = new Uint8Array(binBuffer);
+      const result = await this.parser.parse(metBytes, SHOWCASE_VIDEO_START_SEC);
+      this.telemetry.set(result);
+      console.log(
+        `[AUTO-LOAD] TelemetryResult: ${result.gps.length} GPS atoms,` +
+        ` ${result.accl.length} ACCL atoms, ${result.grav.length} GRAV atoms`,
+      );
+
+      await this.vault.save('tiny_showcase.mp4', 0, result);
+
+      const showcaseFile = new File([], 'tiny_showcase.mp4', { type: 'video/mp4' });
+      this.clipApi.upsert(buildClipRequest(showcaseFile, result)).subscribe({
+        next: saved => this.library.update(existing => {
+          const idx = existing.findIndex(c => c.id === saved.id);
+          return idx >= 0
+            ? [...existing.slice(0, idx), saved, ...existing.slice(idx + 1)]
+            : [saved, ...existing];
+        }),
+        error: err => console.warn('[API] POST /api/clips failed (silent degradation):', err),
+      });
+
+      // GPX parsed after MP4 so videoStartEpoch is known — no re-anchor needed.
+      const gpxFile = new File([gpxBlob], 'strava 10052026.gpx', { type: 'application/gpx+xml' });
+      await this.processGpxFile(gpxFile);
+
+    } catch (err) {
+      this.pipelineError = String(err);
+      console.warn('[AUTO-LOAD] Failed to load default assets:', err);
+    } finally {
+      this.isProcessing.set(false);
+    }
   }
 
   async onFileSelected(event: Event): Promise<void> {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
+    await this.processFile(file);
+  }
 
+  private async processFile(file: File): Promise<void> {
     this.telemetry.set(null);
     this.feedEntries.set([]);
     this.pipelineError = null;
@@ -179,6 +234,10 @@ export class AppComponent implements OnInit, OnDestroy {
   async onGpxSelected(event: Event): Promise<void> {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
+    await this.processGpxFile(file);
+  }
+
+  private async processGpxFile(file: File): Promise<void> {
     const videoStartSec = this.telemetry()?.videoStartEpoch ?? 0;
     const data = await this.stravaService.parseGpx(file, videoStartSec);
     this.stravaGps.set(data);

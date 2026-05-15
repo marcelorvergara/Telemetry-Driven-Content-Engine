@@ -129,6 +129,30 @@ getResultPtr() uint32
 getResultLen() uint32
 ```
 
+### Showcase Auto-Load — Split-Asset Strategy
+
+The public showcase at `vergaraverse.web.app` auto-loads a GoPro clip + Strava GPX on page open without user interaction. Three static assets are served from `angular/src/assets/`:
+
+| Asset | Purpose |
+|---|---|
+| `tiny_showcase.mp4` | Compressed video for the `<video>` player only — **no telemetry track** |
+| `telemetry_sample.bin` | Raw GPMF binary extracted from the original clip (pre-demux) |
+| `strava 10052026.gpx` | Full-ride Strava GPX (not trimmed to clip length) |
+
+**Why split?** FFmpeg re-encodes the container when producing a compressed MP4, which drops the proprietary GoPro `gpmd` track tag. The `Mp4DemuxerService` searches for this tag by FourCC; when it is absent, demuxing returns zero bytes and the WASM parse produces no data. Separating the video from the telemetry binary sidesteps this entirely.
+
+**Demuxer bypass**: `loadDefaultAssets()` skips `Mp4DemuxerService`. It fetches `telemetry_sample.bin` as `ArrayBuffer`, converts it to `Uint8Array`, and passes it directly to `GpmfParserService.parse(metBytes, SHOWCASE_VIDEO_START_SEC)`.
+
+**`SHOWCASE_VIDEO_START_SEC`**: Unix epoch seconds of the showcase clip's first frame. Derivation:
+1. Load the **original** GoPro MP4 in the app (the full, uncompressed file).
+2. Read `videoStartSec` from the demuxer console output: `[DEMUXER] … videoStartSec=NNNN`.
+3. Add the clip's start-offset in seconds (e.g. `+ 60` if `tiny_showcase.mp4` starts at 1:00 of the original).
+4. Update the constant in `app.ts`. Current value: `1778407717` (GX011209.MP4 start `1778407657` + 60 s).
+
+**Load order constraint**: `processGpxFile()` must be called **after** `this.telemetry.set(result)`. It reads `this.telemetry()?.videoStartEpoch` to anchor Strava `.t` values. Calling it before the parser runs leaves `videoStartEpoch = 0`, making all Strava timestamps absolute Unix ms (~1.7 T ms) and breaking every biometric interpolation.
+
+**`isProcessing` management**: `loadDefaultAssets()` manages the signal manually (set true at entry, false in `finally`). `processFile()` is not called — do not add a second `isProcessing` toggle inside `processGpxFile()` when called from the auto-load path.
+
 ### Canvas Rendering — Ghost Vector Map Rule
 
 **DOM-based map libraries (Leaflet, Mapbox, Google Maps) are permanently forbidden** in this project.
