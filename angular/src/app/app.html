@@ -1,19 +1,13 @@
 <div class="app-shell">
 
-  <!-- ── Header ──────────────────────────────────────────────────────── -->
+  <!-- ── Header ────────────────────────────────────────────────────────── -->
   <header class="app-header">
-    <span class="brand">VERGARAVERSE</span>
-    <div class="controls">
 
-      <label class="btn btn-file" [class.disabled]="isProcessing()">
-        <input
-          type="file"
-          accept=".mp4,video/mp4"
-          [disabled]="isProcessing()"
-          (change)="onFileSelected($event)">
-        {{ isProcessing() ? 'PARSING TELEMETRY...' : 'SELECT GOPRO MP4' }}
-      </label>
-
+    <div class="header-top">
+      <div class="brand-block">
+        <span class="brand">VERGARAVERSE</span>
+        <span class="tagline">Add real-time GoPro telemetry overlays to your ride videos</span>
+      </div>
       @if (telemetry()) {
         <span class="btn btn-export"
           [class.disabled]="overlay.isExporting()"
@@ -21,99 +15,145 @@
           {{ overlay.isExporting() ? 'EXPORTING...' : 'EXPORT OVERLAY (WEBM)' }}
         </span>
       }
+    </div>
 
-      <div class="theme-switcher">
-        @for (theme of allThemes; track theme.id) {
-          <button
-            class="theme-btn"
-            [class.active]="themeService.currentTheme().id === theme.id"
-            (click)="themeService.setTheme(theme)">
-            {{ theme.id.split('-').pop()!.toUpperCase() }}
-          </button>
-        }
+    <div class="control-bar">
+
+      <!-- Zone: LOAD -->
+      <div class="control-group">
+        <span class="control-group-label">LOAD</span>
+        <div class="control-group-body">
+          <label class="btn btn-file" [class.disabled]="isProcessing()">
+            <input
+              type="file"
+              accept=".mp4,video/mp4"
+              [disabled]="isProcessing()"
+              (change)="onFileSelected($event)">
+            {{ isProcessing() ? 'PARSING...' : 'GOPRO MP4' }}
+          </label>
+          <div class="source-toggle">
+            <button class="source-btn"
+              [class.active]="telemetrySource() === 'GoPro'"
+              (click)="setTelemetrySource('GoPro')">GOPRO</button>
+            <button class="source-btn"
+              [class.active]="telemetrySource() === 'Strava'"
+              (click)="setTelemetrySource('Strava')">STRAVA</button>
+          </div>
+          @if (telemetrySource() === 'Strava') {
+            <label class="btn btn-file">
+              <input type="file" accept=".gpx" (change)="onGpxSelected($event)">
+              {{ stravaGps().length > 0 ? 'GPX LOADED' : 'UPLOAD GPX' }}
+            </label>
+          }
+        </div>
       </div>
 
-      <label class="map-toggle" [class.active]="showMapPath()">
-        <input type="checkbox" [checked]="showMapPath()" (change)="showMapPath.set(!showMapPath())">
-        <span class="map-toggle-track">
-          <span class="map-toggle-thumb"></span>
-        </span>
-        <span class="map-toggle-label">MAP PATH</span>
-      </label>
+      <div class="control-group-divider"></div>
 
-      @if (showMapPath()) {
-        <div class="alpha-control">
-          <span class="alpha-label">BG ALPHA</span>
-          <input
-            type="range"
-            class="alpha-slider"
-            min="0"
-            max="1"
-            step="0.05"
-            [value]="themeService.currentTheme().map.backgroundAlpha"
-            (input)="themeService.updateMapAlpha(+$any($event.target).value)">
+      <!-- Zone: PRESET -->
+      <div class="control-group">
+        <span class="control-group-label">PRESET</span>
+        <div class="control-group-body">
+          <div class="theme-switcher">
+            @for (theme of allThemes; track theme.id) {
+              <button
+                class="theme-btn"
+                [class.active]="themeService.currentTheme().id === theme.id"
+                (click)="themeService.setTheme(theme)">
+                {{ theme.id.split('-').pop()!.toUpperCase() }}
+              </button>
+            }
+          </div>
         </div>
-        <div class="alpha-control">
-          <span class="alpha-label">ZOOM: {{ mapZoom() }}×</span>
-          <input
-            type="range"
-            class="alpha-slider"
-            min="1"
-            max="8"
-            step="0.5"
-            [value]="mapZoom()"
-            (input)="mapZoom.set(+$any($event.target).value)">
-        </div>
-      }
-
-      <div class="source-toggle">
-        <span class="source-toggle-label">SOURCE</span>
-        <button
-          class="theme-btn"
-          [class.active]="telemetrySource() === 'GoPro'"
-          (click)="setTelemetrySource('GoPro')">GOPRO</button>
-        <button
-          class="theme-btn"
-          [class.active]="telemetrySource() === 'Strava'"
-          (click)="setTelemetrySource('Strava')">STRAVA</button>
       </div>
 
-      @if (telemetrySource() === 'Strava') {
-        <label class="btn btn-file">
-          <input type="file" accept=".gpx" (change)="onGpxSelected($event)">
-          {{ stravaGps().length > 0 ? 'GPX LOADED (' + stravaGps().length + ' PTS)' : 'UPLOAD GPX' }}
-        </label>
-        <div class="offset-control">
-          <span class="alpha-label">OFFSET: {{ syncOffsetMs() }}ms</span>
-          <input
-            type="range"
-            class="alpha-slider"
-            min="-60000"
-            max="60000"
-            step="100"
-            [value]="syncOffsetMs()"
-            (input)="onSyncOffsetChange(+$any($event.target).value)">
+      <div class="control-group-divider"></div>
+
+      <!-- Zone: MAP -->
+      <div class="control-group">
+        <span class="control-group-label">MAP</span>
+        <div class="control-group-body">
+          <label class="map-toggle" [class.active]="showMapPath()">
+            <input type="checkbox" [checked]="showMapPath()" (change)="showMapPath.set(!showMapPath())">
+            <span class="map-toggle-track">
+              <span class="map-toggle-thumb"></span>
+            </span>
+            <span class="map-toggle-label">PATH</span>
+          </label>
+          @if (showMapPath()) {
+            <div class="alpha-control">
+              <span class="alpha-label">BG ALPHA</span>
+              <input type="range" class="alpha-slider" min="0" max="1" step="0.05"
+                [value]="themeService.currentTheme().map.backgroundAlpha"
+                (input)="themeService.updateMapAlpha(+$any($event.target).value)">
+            </div>
+            <div class="alpha-control">
+              <span class="alpha-label">ZOOM</span>
+              <div class="theme-switcher">
+                @for (z of zoomLevels; track z) {
+                  <button class="theme-btn"
+                    [class.active]="mapZoom() === z"
+                    (click)="mapZoom.set(z)">{{ z }}×</button>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+
+      @if (telemetrySource() === 'Strava' && stravaGps().length > 0) {
+        <div class="control-group-divider"></div>
+        <!-- Zone: SYNC -->
+        <div class="control-group">
+          <span class="control-group-label">SYNC</span>
+          <div class="control-group-body">
+            <div class="offset-control">
+              <span class="alpha-label">OFFSET {{ syncOffsetMs() }}ms</span>
+              <input type="range" class="alpha-slider" min="-60000" max="60000" step="100"
+                title="Align GPX timing with your video — drag left/right to shift biometric data earlier or later"
+                [value]="syncOffsetMs()"
+                (input)="onSyncOffsetChange(+$any($event.target).value)">
+            </div>
+          </div>
         </div>
       }
 
     </div>
+
   </header>
+
+  <!-- ── Onboarding strip ───────────────────────────────────────────────── -->
+  <div class="onboarding-strip">
+    <div class="onboard-step">
+      <span class="onboard-num">01</span>
+      <span class="onboard-title">LOAD GOPRO MP4</span>
+      <span class="onboard-desc">Select your clip to extract embedded telemetry</span>
+    </div>
+    <span class="onboard-arrow">→</span>
+    <div class="onboard-step">
+      <span class="onboard-num">02</span>
+      <span class="onboard-title">LOAD STRAVA GPX</span>
+      <span class="onboard-desc">Optional — overlays HR, cadence &amp; elevation</span>
+    </div>
+    <span class="onboard-arrow">→</span>
+    <div class="onboard-step">
+      <span class="onboard-num">03</span>
+      <span class="onboard-title">EXPORT OVERLAY</span>
+      <span class="onboard-desc">Download WebM with telemetry baked in</span>
+    </div>
+  </div>
 
   @if (pipelineError) {
     <p class="error-msg">&#9888; {{ pipelineError }}</p>
   }
 
-  <!-- ── 2-column content grid ───────────────────────────────────────── -->
+  <!-- ── 2-column content grid ───────────────────────────────────────────── -->
   <div class="content-grid">
 
     <!-- Left: 16:9 video stage -->
     <section class="video-stage">
       @if (telemetry()) {
-        <p class="atom-counts">
-          GPS {{ telemetry()!.gps.length }} &nbsp;|&nbsp;
-          ACCL {{ telemetry()!.accl.length }} &nbsp;|&nbsp;
-          GRAV {{ telemetry()!.grav.length }}
-        </p>
+        <p class="atom-counts">Data loaded: GPS &nbsp;·&nbsp; Accelerometer &nbsp;·&nbsp; Gravity</p>
       }
       <div class="video-wrapper">
         <video
@@ -139,10 +179,15 @@
     @if (telemetry()) {
 
       <aside class="feed-panel">
-        <h2 class="panel-title">GOPRO LIVE TELEMETRY FEED</h2>
+        <h2 class="panel-title">LIVE TELEMETRY FEED</h2>
+        <div class="feed-header">
+          <span>TIME</span>
+          <span>SPEED</span>
+          <span>G-FORCE</span>
+        </div>
         <div class="feed-list">
           @if (feedEntries().length === 0) {
-            <p class="feed-empty">Waiting for playback&hellip;</p>
+            <p class="feed-empty">Play the video to see live data&hellip;</p>
           }
           @for (entry of feedEntries(); track entry.t) {
             <div class="feed-entry">
@@ -188,4 +233,40 @@
     }
 
   </div>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────── -->
+  <footer class="app-footer">
+    <nav class="footer-links" aria-label="Social links">
+
+      <a href="https://github.com/marcelorvergara/Telemetry-Driven-Content-Engine"
+         target="_blank" rel="noopener" aria-label="GitHub repository" class="footer-icon">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+        </svg>
+      </a>
+
+      <a href="https://www.tiktok.com/@vergaraverse"
+         target="_blank" rel="noopener" aria-label="TikTok" class="footer-icon">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.34 6.34 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.27 8.27 0 004.84 1.55V6.79a4.86 4.86 0 01-1.07-.1z"/>
+        </svg>
+      </a>
+
+      <a href="https://www.youtube.com/@VergaraVerse"
+         target="_blank" rel="noopener" aria-label="YouTube" class="footer-icon">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M23.495 6.205a3.007 3.007 0 00-2.088-2.088c-1.87-.501-9.396-.501-9.396-.501s-7.507-.01-9.396.501A3.007 3.007 0 00.527 6.205a31.247 31.247 0 00-.522 5.805 31.247 31.247 0 00.522 5.783 3.007 3.007 0 002.088 2.088c1.868.502 9.396.502 9.396.502s7.506 0 9.396-.502a3.007 3.007 0 002.088-2.088 31.247 31.247 0 00.5-5.783 31.247 31.247 0 00-.5-5.805zM9.609 15.601V8.408l6.264 3.602z"/>
+        </svg>
+      </a>
+
+      <a href="https://www.linkedin.com/in/mvergara/"
+         target="_blank" rel="noopener" aria-label="LinkedIn" class="footer-icon">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+        </svg>
+      </a>
+
+    </nav>
+  </footer>
+
 </div>

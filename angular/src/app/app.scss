@@ -12,12 +12,12 @@
 
 // ── Page shell ────────────────────────────────────────────────────────────
 // height + overflow: hidden hard-clip the dashboard to the viewport.
-// grid-template-rows: auto auto 1fr gives header and optional error their
-// natural height; the content grid takes whatever is left.
+// grid-template-rows: auto auto auto 1fr — header, onboarding strip, optional
+// error message, content grid (1fr absorbs remaining viewport height).
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr auto;
   height: 100vh;
   overflow: hidden;
   background: var(--bg);
@@ -31,11 +31,23 @@
 
 .app-header {
   display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0.6rem;
   border-bottom: 1px solid var(--magenta);
   padding-bottom: 0.75rem;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.brand-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .brand {
@@ -44,11 +56,10 @@
   text-shadow: 0 0 10px var(--cyan);
 }
 
-.controls {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  align-items: center;
+.tagline {
+  font-size: 0.68rem;
+  color: rgba(0, 255, 255, 0.3);
+  letter-spacing: 0.04em;
 }
 
 .btn {
@@ -76,8 +87,13 @@
 }
 
 .btn-export {
-  background: var(--cyan);
+  background: var(--magenta);
   color: #000;
+  font-size: 0.88rem;
+  padding: 0.65rem 1.5rem;
+  box-shadow: 0 0 18px rgba(255, 0, 255, 0.45);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .theme-switcher {
@@ -106,6 +122,34 @@
   &:hover:not(.active) {
     border-color: var(--cyan);
     color: var(--cyan);
+  }
+}
+
+// Source toggle uses an underline-accent active state rather than a solid fill,
+// keeping it visually distinct from the PRESET buttons' filled-tab treatment.
+.source-btn {
+  padding: 0.4rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid rgba(0, 255, 255, 0.15);
+  border-bottom-width: 2px;
+  color: rgba(0, 255, 255, 0.35);
+  user-select: none;
+  transition: border-color 0.12s, color 0.12s, text-shadow 0.12s;
+
+  &.active {
+    border-color: rgba(0, 255, 255, 0.25);
+    border-bottom-color: var(--cyan);
+    color: var(--cyan);
+    text-shadow: 0 0 8px rgba(0, 255, 255, 0.45);
+  }
+
+  &:hover:not(.active) {
+    border-color: rgba(0, 255, 255, 0.3);
+    color: rgba(0, 255, 255, 0.6);
   }
 }
 
@@ -167,21 +211,51 @@
 
 .map-toggle-label { white-space: nowrap; }
 
+// ── Control Bar ──────────────────────────────────────────────────────────
+
+.control-bar {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  row-gap: 0.75rem;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0 1rem;
+
+  &:first-child { padding-left: 0; }
+}
+
+.control-group-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  color: rgba(0, 255, 255, 0.25);
+}
+
+.control-group-body {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.control-group-divider {
+  width: 1px;
+  background: rgba(0, 255, 255, 0.1);
+  align-self: stretch;
+  margin: 0 0.15rem;
+  flex-shrink: 0;
+}
+
 // ── Telemetry Source Toggle ───────────────────────────────────────────────
 
 .source-toggle {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-}
-
-.source-toggle-label {
-  font-family: inherit;
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
-  color: rgba(0, 255, 255, 0.35);
-  margin-right: 0.15rem;
-  white-space: nowrap;
 }
 
 // ── GPS Sync Offset Slider ────────────────────────────────────────────────
@@ -252,6 +326,49 @@
     border: none;
     cursor: pointer;
   }
+}
+
+// ── Onboarding strip ─────────────────────────────────────────────────────
+
+.onboarding-strip {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.08);
+  flex-wrap: wrap;
+}
+
+.onboard-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.onboard-num {
+  font-size: 0.62rem;
+  color: var(--magenta);
+  opacity: 0.6;
+  letter-spacing: 0.1em;
+}
+
+.onboard-title {
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: var(--cyan);
+}
+
+.onboard-desc {
+  font-size: 0.62rem;
+  color: rgba(0, 255, 255, 0.3);
+  letter-spacing: 0.03em;
+}
+
+.onboard-arrow {
+  font-size: 0.72rem;
+  color: rgba(255, 0, 255, 0.35);
+  flex-shrink: 0;
 }
 
 // ── Error ─────────────────────────────────────────────────────────────────
@@ -340,6 +457,20 @@
   border-bottom: 1px solid var(--cyan);
   text-shadow: 0 0 8px var(--cyan);
   flex-shrink: 0;
+}
+
+.feed-header {
+  display: grid;
+  grid-template-columns: 52px 1fr 1fr;
+  gap: 0.4rem;
+  padding: 0.25rem 0.35rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  color: rgba(0, 255, 255, 0.25);
+  border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+  flex-shrink: 0;
+
+  span:last-child { text-align: right; }
 }
 
 // flex: 1 + overflow-y: auto: panel-title is pinned, feed text scrolls.
@@ -450,4 +581,38 @@
 .entry-date {
   font-size: 0.68rem;
   opacity: 0.35;
+}
+
+// ── Footer ────────────────────────────────────────────────────────────────
+
+.app-footer {
+  border-top: 1px solid rgba(0, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0;
+}
+
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.footer-icon {
+  display: flex;
+  align-items: center;
+  color: rgba(0, 255, 255, 0.2);
+  transition: color 0.15s, filter 0.15s;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    display: block;
+  }
+
+  &:hover {
+    color: var(--cyan);
+    filter: drop-shadow(0 0 6px var(--cyan));
+  }
 }

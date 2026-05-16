@@ -40,6 +40,7 @@ export class AppComponent implements OnInit, OnDestroy {
   pipelineError: string | null = null;
 
   readonly allThemes       = ALL_THEMES;
+  readonly zoomLevels      = [1, 2, 3, 5];
   readonly showMapPath     = signal<boolean>(false);
   readonly mapZoom         = signal<number>(1);
   readonly telemetrySource = signal<'GoPro' | 'Strava'>('GoPro');
