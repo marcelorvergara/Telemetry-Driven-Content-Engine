@@ -11,9 +11,10 @@
 *, *::before, *::after { box-sizing: border-box; }
 
 // ── Page shell ────────────────────────────────────────────────────────────
-// height + overflow: hidden hard-clip the dashboard to the viewport.
-// grid-template-rows: auto auto auto 1fr — header, onboarding strip, optional
-// error message, content grid (1fr absorbs remaining viewport height).
+// Desktop: height + overflow: hidden hard-clip the dashboard to the viewport.
+// grid-template-rows: auto auto auto 1fr auto — header / onboarding strip /
+// optional error / content grid (1fr) / footer. Mobile overrides to auto rows
+// with overflow: auto so the page scrolls naturally.
 
 .app-shell {
   display: grid;
@@ -393,9 +394,6 @@
   min-height: 0;
   overflow: hidden;
 
-  @media (max-width: 700px) {
-    grid-template-columns: 1fr;
-  }
 }
 
 // ── Video stage ───────────────────────────────────────────────────────────
@@ -614,5 +612,92 @@
   &:hover {
     color: var(--cyan);
     filter: drop-shadow(0 0 6px var(--cyan));
+  }
+}
+
+// ── Mobile responsive (≤ 700 px) ─────────────────────────────────────────
+
+@media (max-width: 700px) {
+
+  // Shell scrolls naturally instead of being viewport-locked; tighter gutters.
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: auto;
+    padding: 0.75rem;
+    grid-template-rows: auto auto auto auto auto;
+  }
+
+  // Header top: export button wraps to its own full-width row below the brand.
+  .header-top { flex-wrap: wrap; }
+  .btn-export {
+    flex-basis: 100%;
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+  }
+
+  // Control bar: groups stack vertically; vertical dividers are meaningless when stacked.
+  .control-group-divider { display: none; }
+  .control-group { padding: 0; width: 100%; }
+
+  // Touch targets — minimum 44 × 44 px for all tap-able elements.
+  .btn,
+  .theme-btn,
+  .source-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  // Map toggle: the <label> is the tap target — grow it to 44 px.
+  .map-toggle { min-height: 44px; }
+
+  // Slider: wider thumb for finger dragging; track fills the available group width.
+  .alpha-slider {
+    width: 100%;
+    height: 4px;
+
+    &::-webkit-slider-thumb {
+      width: 22px;
+      height: 22px;
+      margin-top: -9px;
+    }
+
+    &::-moz-range-thumb {
+      width: 22px;
+      height: 22px;
+    }
+  }
+
+  // Onboarding: vertical stack; → arrows are redundant next to the step numbers.
+  .onboarding-strip {
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .onboard-arrow { display: none; }
+
+  // Content grid: single column, auto height — page scrolls past the video.
+  .content-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+
+  // Video stage: auto height; wrapper locks to 16:9 so the canvas overlay
+  // stays correctly bounded and cannot clip outside the player frame.
+  .video-stage { height: auto; }
+  .video-wrapper {
+    flex: none;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+  }
+
+  // Side panels: auto height; minimum prevents them collapsing when empty.
+  .feed-panel,
+  .vault-panel {
+    height: auto;
+    min-height: 200px;
   }
 }
