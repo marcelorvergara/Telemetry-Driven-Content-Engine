@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, signal, computed } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { TelemetryResult, StravaGpsPoint } from './core/models/telemetry.model';
@@ -44,8 +44,12 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly showMapPath     = signal<boolean>(false);
   readonly mapZoom         = signal<number>(1);
   readonly telemetrySource = signal<'GoPro' | 'Strava'>('GoPro');
-  readonly stravaGps       = signal<StravaGpsPoint[]>([]);
-  readonly syncOffsetMs    = signal<number>(0);
+  readonly stravaGps          = signal<StravaGpsPoint[]>([]);
+  readonly syncOffsetMs       = signal<number>(0);
+  readonly hasGoProTelemetry  = computed(() => {
+    const t = this.telemetry();
+    return !!(t && (t.gps.length > 0 || t.accl.length > 0));
+  });
 
   private objectUrl: string | null = null;
 
@@ -118,6 +122,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   private async processFile(file: File): Promise<void> {
+    this.syncOffsetMs.set(0);
     this.telemetry.set(null);
     this.feedEntries.set([]);
     this.pipelineError = null;
@@ -135,6 +140,13 @@ export class AppComponent implements OnInit, OnDestroy {
       // Stage 2 — Ephemeral Worker: send the flat Uint8Array to Go-WASM.
       // The worker instantiates a clean gpmf.wasm, runs manual BigEndian
       // decoding + Option B SCAL application, then self-terminates (Nuke Option).
+      // Short-circuit for standard (non-GoPro) MP4s: demuxer returns empty bytes
+      // when no gpmd track exists. Set an empty result so the no-telemetry banner
+      // fires and the user can proceed with a Strava GPX only.
+      if (metBytes.length === 0) {
+        this.telemetry.set({ status: 3, videoStartEpoch: videoStartSec, gps: [], accl: [], grav: [] });
+        return;
+      }
       const result = await this.parser.parse(metBytes, videoStartSec);
       this.telemetry.set(result);
 
@@ -215,6 +227,10 @@ export class AppComponent implements OnInit, OnDestroy {
     this.syncOffsetMs.set(offsetMs);
   }
 
+  onSyncNudge(deltaMs: number): void {
+    this.syncOffsetMs.update(v => v + deltaMs);
+  }
+
   async onGpxSelected(event: Event): Promise<void> {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
@@ -222,6 +238,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   private async processGpxFile(file: File): Promise<void> {
+    this.syncOffsetMs.set(0);
     const videoStartSec = this.telemetry()?.videoStartEpoch ?? 0;
     const data = await this.stravaService.parseGpx(file, videoStartSec);
     this.stravaGps.set(data);

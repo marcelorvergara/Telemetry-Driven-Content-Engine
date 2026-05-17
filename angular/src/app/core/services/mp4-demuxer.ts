@@ -58,6 +58,9 @@ export class Mp4DemuxerService {
       };
 
       mp4File.onReady = (info: Movie) => {
+        // Read creation timestamp first — valid for both GoPro and standard MP4s.
+        videoStartSec = Math.max(0, Math.floor(info.created.getTime() / 1000));
+
         const gpmfTrack: Track | undefined = info.tracks.find(
           (t: Track) =>
             t.codec === GPMD_CODEC ||
@@ -65,17 +68,14 @@ export class Mp4DemuxerService {
         );
 
         if (!gpmfTrack) {
-          const found = info.tracks.map((t: Track) => `${t.name}[${t.codec}]`).join(', ');
-          settle(() => reject(new Error(
-            `No GoPro telemetry track (gpmd) found. Tracks present: [${found}]`,
-          )));
+          // Standard Android/smartphone MP4 — no telemetry track is not an error.
+          // Resolve with empty bytes so the pipeline can surface the no-telemetry UI
+          // and accept a Strava GPX for biometrics, anchored to this videoStartSec.
+          settle(() => resolve({ metBytes: new Uint8Array(0), videoStartSec }));
           return;
         }
 
         expectedSamples = gpmfTrack.nb_samples;
-        // Movie.created is a Date converted from the mvhd creation_time field
-        // (seconds since 1904) by mp4box — getTime()/1000 gives Unix seconds.
-        videoStartSec = Math.max(0, Math.floor(info.created.getTime() / 1000));
 
         mp4File.setExtractionOptions(gpmfTrack.id, null, { nbSamples: Infinity });
         mp4File.start();

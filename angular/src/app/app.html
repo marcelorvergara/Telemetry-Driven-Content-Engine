@@ -29,7 +29,7 @@
               accept=".mp4,video/mp4"
               [disabled]="isProcessing()"
               (change)="onFileSelected($event)">
-            {{ isProcessing() ? 'PARSING...' : 'GOPRO MP4' }}
+            {{ isProcessing() ? 'PARSING...' : 'LOAD VIDEO' }}
           </label>
           <div class="source-toggle">
             <button class="source-btn"
@@ -101,18 +101,23 @@
         </div>
       </div>
 
-      @if (telemetrySource() === 'Strava' && stravaGps().length > 0) {
+      @if (stravaGps().length > 0) {
         <div class="control-group-divider"></div>
         <!-- Zone: SYNC -->
-        <div class="control-group">
+        <div class="control-group" [class.sync-attention]="!hasGoProTelemetry()">
           <span class="control-group-label">SYNC</span>
           <div class="control-group-body">
             <div class="offset-control">
-              <span class="alpha-label">OFFSET {{ syncOffsetMs() }}ms</span>
-              <input type="range" class="alpha-slider" min="-60000" max="60000" step="100"
-                title="Align GPX timing with your video — drag left/right to shift biometric data earlier or later"
-                [value]="syncOffsetMs()"
-                (input)="onSyncOffsetChange(+$any($event.target).value)">
+              <button class="nudge-btn"
+                title="Shift Strava data 100 ms earlier"
+                (click)="onSyncNudge(-100)">&#8249;</button>
+              <span class="offset-display">{{ (syncOffsetMs() / 1000).toFixed(1) }} s</span>
+              <button class="nudge-btn"
+                title="Shift Strava data 100 ms later"
+                (click)="onSyncNudge(100)">&#8250;</button>
+              <button class="nudge-btn nudge-reset"
+                title="Reset offset to zero"
+                (click)="onSyncOffsetChange(0)">RESET</button>
             </div>
           </div>
         </div>
@@ -126,14 +131,14 @@
   <div class="onboarding-strip">
     <div class="onboard-step">
       <span class="onboard-num">01</span>
-      <span class="onboard-title">LOAD GOPRO MP4</span>
-      <span class="onboard-desc">Select your clip to extract embedded telemetry</span>
+      <span class="onboard-title">LOAD VIDEO</span>
+      <span class="onboard-desc">Select your GoPro or Smartphone clip.</span>
     </div>
     <span class="onboard-arrow">→</span>
     <div class="onboard-step">
       <span class="onboard-num">02</span>
       <span class="onboard-title">LOAD STRAVA GPX</span>
-      <span class="onboard-desc">Optional — overlays HR, cadence &amp; elevation</span>
+      <span class="onboard-desc">Required for smartphones, optional for GoPro.</span>
     </div>
     <span class="onboard-arrow">→</span>
     <div class="onboard-step">
@@ -145,6 +150,12 @@
 
   @if (pipelineError) {
     <p class="error-msg">&#9888; {{ pipelineError }}</p>
+  }
+
+  @if (telemetry() && !hasGoProTelemetry() && stravaGps().length === 0) {
+    <div class="no-telemetry-banner">
+      &#9888; No GoPro telemetry found. Upload a Strava GPX to power the overlay.
+    </div>
   }
 
   <!-- ── 2-column content grid ───────────────────────────────────────────── -->

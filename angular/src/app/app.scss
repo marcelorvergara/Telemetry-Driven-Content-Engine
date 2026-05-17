@@ -259,12 +259,72 @@
   gap: 0.25rem;
 }
 
-// ── GPS Sync Offset Slider ────────────────────────────────────────────────
+// ── GPS Sync Offset Controls ──────────────────────────────────────────────
 
 .offset-control {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.3rem;
+}
+
+.offset-display {
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--cyan);
+  min-width: 3.2rem;
+  text-align: center;
+}
+
+.nudge-btn {
+  padding: 0.3rem 0.55rem;
+  font-family: inherit;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  background: rgba(0, 255, 255, 0.04);
+  border: 1px solid rgba(0, 255, 255, 0.2);
+  color: rgba(0, 255, 255, 0.55);
+  user-select: none;
+  transition: border-color 0.1s, color 0.1s, background 0.1s, box-shadow 0.1s;
+
+  &:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: rgba(0, 255, 255, 0.08);
+    box-shadow: 0 0 8px rgba(0, 255, 255, 0.28);
+  }
+
+  &:active {
+    background: rgba(0, 255, 255, 0.15);
+  }
+}
+
+.nudge-reset {
+  border-color: rgba(255, 0, 255, 0.2);
+  color: rgba(255, 0, 255, 0.5);
+
+  &:hover {
+    border-color: var(--magenta);
+    color: var(--magenta);
+    background: rgba(255, 0, 255, 0.08);
+    box-shadow: 0 0 8px rgba(255, 0, 255, 0.28);
+  }
+}
+
+// ── Sync-attention pulse (Android / no GoPro telemetry path) ─────────────
+// Fires once when the SYNC panel first appears. Ends at a residual glow so
+// the panel remains visually distinct until the user makes their first nudge.
+
+@keyframes sync-pulse {
+  0%   { box-shadow: 0 0 0   0   rgba(0, 255, 255, 0); }
+  20%  { box-shadow: 0 0 16px 3px rgba(0, 255, 255, 0.6); }
+  100% { box-shadow: 0 0 8px  1px rgba(0, 255, 255, 0.18); }
+}
+
+.sync-attention {
+  border-radius: 2px;
+  animation: sync-pulse 2s ease-out forwards;
 }
 
 // ── Map Alpha Slider ──────────────────────────────────────────────────────
@@ -378,6 +438,18 @@
   color: var(--magenta);
   font-size: 0.82rem;
   margin: 0;
+}
+
+// ── No-telemetry banner (Android / standard MP4 users) ────────────────────
+
+.no-telemetry-banner {
+  color: #ffff00;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid rgba(255, 255, 0, 0.3);
+  background: rgba(255, 255, 0, 0.05);
+  box-shadow: 0 0 10px rgba(255, 255, 0, 0.12);
 }
 
 // ── 2-column content grid ─────────────────────────────────────────────────
@@ -644,7 +716,8 @@
   // Touch targets — minimum 44 × 44 px for all tap-able elements.
   .btn,
   .theme-btn,
-  .source-btn {
+  .source-btn,
+  .nudge-btn {
     min-height: 44px;
     display: inline-flex;
     align-items: center;

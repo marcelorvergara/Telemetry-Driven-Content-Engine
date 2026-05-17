@@ -64,6 +64,29 @@ The parser owns the SCAL divide and emits physical units. Angular receives only 
 - **Strava GPX**: `absoluteUnixMs = new Date(timeStr).getTime()`. Compute `.t = absoluteUnixMs - videoStartEpoch * 1000`. Store `absoluteUnixMs` on `StravaGpsPoint` — the user may upload the GPX before loading the GoPro clip. Re-anchor in `onFileSelected()` after the video parse completes. Never recompute `absoluteUnixMs`.
 - All `.t` values: **milliseconds from video start** (`currentTime × 1000`). Never emit seconds, µs, or raw GPS epoch.
 
+### Time-Shifted Interpolation — GPX Sync
+
+`syncOffsetMs` is a `WritableSignal<number>` owned by `AppComponent`. It corrects clock drift between the phone/action camera and the Strava GPS recording when the two devices were not synchronised.
+
+**Invariant: the offset is applied exclusively at lookup time — never by mutating stored data.**
+
+```typescript
+// Live HUD path (telemetry-overlay.ts → drawFrame):
+const renderTimeMs = relativeTimeMs + this.syncOffsetMs();
+
+// Export path (telemetry-overlay.ts → export loop):
+const exportRenderMs = videoEl.currentTime * 1000 + this.syncOffsetMs();
+```
+
+**Strictly forbidden:**
+- Mutating `StravaGpsPoint.t` or `StravaGpsPoint.relativeTimeSec` to bake the offset into the data. Those fields are anchored at parse/re-anchor time and must remain stable.
+- Applying the offset inside `interpolateBiometrics()` itself — the function is a pure binary search; the caller owns the time argument.
+- Any new code path that calls `interpolateBiometrics()` without forwarding `syncOffsetMs()` to the time argument.
+
+**Reset behaviour:** `syncOffsetMs.set(0)` is called at the top of both `processFile()` and `processGpxFile()` so stale offsets from a previous session never bleed into the next.
+
+**UI:** The SYNC zone (NLE-style `‹` / `›` nudge buttons + `RESET`) is conditionally rendered when `stravaGps().length > 0`. The `sync-attention` CSS class applies a one-shot cyan pulse animation when `!hasGoProTelemetry()` to guide Android/Strava-only users who must sync manually.
+
 ### Sensor Scope (MVP)
 
 | Sensor | Tag / Source | Status |

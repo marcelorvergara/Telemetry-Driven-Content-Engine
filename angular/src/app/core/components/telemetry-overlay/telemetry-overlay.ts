@@ -174,7 +174,7 @@ export class TelemetryOverlay implements OnDestroy {
       let exportBio: { hr: number; cad: number; ele: number; speed: number } | null = null;
       if (exportUseStrava) {
         exportBio   = this.interpolateBiometrics(exportStrava, exportRenderMs);
-        exportSpeed = exportBio ? Math.max(exportBio.speed, SPEED_FLOOR_MS) : 0;
+        exportSpeed = exportBio ? (exportBio.speed >= SPEED_FLOOR_MS ? exportBio.speed : 0) : 0;
       }
 
       // Black background so the gauges are visible on Screen blend mode.
@@ -299,7 +299,7 @@ export class TelemetryOverlay implements OnDestroy {
 
     if (useStrava) {
       bio   = this.interpolateBiometrics(stravaPoints, renderTimeMs);
-      speed = bio ? Math.max(bio.speed, SPEED_FLOOR_MS) : 0;
+      speed = bio ? (bio.speed >= SPEED_FLOOR_MS ? bio.speed : 0) : 0;
     } else {
       const gps       = telemetry.gps;
       const lockedGPS = gps.filter(g => g.fix >= 2);

@@ -96,6 +96,15 @@ this.stravaGps.update(pts => pts.map(p => ({
 
 **Temporal clip.** Strava activities are typically full rides (1–3 hours); GoPro clips are a few minutes. `drawVectorMap()` filters the array to points with `0 ≤ t ≤ videoDurationMs` before building any geometry. The map bounding box is computed from the clipped points, so the projection fills the map widget with only the in-video portion rather than compressing the relevant segment to a few pixels.
 
+**Manual sync offset.** When a phone records video and Strava records GPS simultaneously but the device clocks are not synchronised, every biometric reading arrives at the wrong video timestamp. The SYNC panel in the header exposes NLE-style `‹` / `›` nudge buttons that increment `syncOffsetMs` by ±100 ms per click. The offset is applied exclusively at interpolation lookup time:
+
+```typescript
+const renderTimeMs = videoEl.currentTime * 1000 + syncOffsetMs();
+interpolateBiometrics(stravaGps, renderTimeMs);
+```
+
+`StravaGpsPoint.t` values are **never mutated** by the offset — shifting the lookup argument keeps the raw anchor timestamps stable for export and re-anchoring. The panel auto-appears when a GPX file is loaded and pulses with a cyan animation for Android users who have no GoPro telemetry to cross-reference against.
+
 **Path2D caching.** Building a path by iterating N points in every 60 Hz frame is O(N) per frame. `drawVectorMap()` builds a `Path2D` object once on cache miss and calls `ctx.stroke(path2D)` — one native call with no array iteration — in the hot path. The cache key `{ width, srcLen, srcT0, durationMs }` detects canvas resize, new data, re-anchored timestamps, and new video loads.
 
 **Zoom slider.** A `1×`–`8×` ZOOM slider is exposed in the header alongside the BG ALPHA control. Zoom is implemented with a canvas transform, not a map library call:
@@ -165,12 +174,15 @@ The write-through flow executes in strict order after every successful parse: WA
 
 At playback (source = GoPro or Strava):
   requestAnimationFrame loop
+    → renderTimeMs = currentTime × 1000 + syncOffsetMs  ← SYNC nudge applied here
     → binary search + interpolation → Canvas HUD (speed, G-force, map dot)
     → Path2D cache hit → ctx.stroke(path2D) [no array iteration]
     → ctx.translate/scale zoom transform (1×–8×)
 
 At export:
-  requestVideoFrameCallback → Ghost Canvas render → MediaRecorder → WebM
+  requestVideoFrameCallback
+    → exportRenderMs = currentTime × 1000 + syncOffsetMs  ← same offset, frame-accurate
+    → Ghost Canvas render → MediaRecorder → WebM
 ```
 
 ---
