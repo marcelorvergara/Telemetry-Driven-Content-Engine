@@ -176,6 +176,8 @@ The public showcase at `vergaraverse.web.app` auto-loads a GoPro clip + Strava G
 
 **`isProcessing` management**: `loadDefaultAssets()` manages the signal manually (set true at entry, false in `finally`). `processFile()` is not called — do not add a second `isProcessing` toggle inside `processGpxFile()` when called from the auto-load path.
 
+**Initial map state**: After `await this.processGpxFile(gpxFile)` completes, `loadDefaultAssets()` calls `this.showMapPath.set(true)` and `this.mapMode.set('full')`. This renders the ghost full-route path immediately on page open without user interaction. These two calls must come after GPX parsing — setting them before would trigger a 60 Hz draw cycle with no data.
+
 ### Canvas Rendering — Ghost Vector Map Rule
 
 **DOM-based map libraries (Leaflet, Mapbox, Google Maps) are permanently forbidden** in this project.

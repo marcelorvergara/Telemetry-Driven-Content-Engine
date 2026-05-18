@@ -152,17 +152,20 @@ Building a path by iterating over N GPS points is O(N) and must not run on every
 ```typescript
 private _path2DCache: {
   path2D:         Path2D;
+  fullPath2D:     Path2D | null;   // ghost path (all base points) — null when !showMap
   clippedPoints:  Array<{ t: number; lat: number; lon: number; fix?: number }>;
   bounds:         { minLat: number; maxLat: number; minLon: number; maxLon: number };
-  cacheKey:       { width: number; srcLen: number; srcT0: number; durationMs: number };
+  cacheKey:       { width: number; srcLen: number; srcT0: number; durationMs: number; mode: 'segment' | 'full'; zoom: number };
 } | null = null;
 ```
 
-**Cache key:** `{ width, srcLen, srcT0, durationMs }` — invalidated by:
+**Cache key:** `{ width, srcLen, srcT0, durationMs, mode, zoom }` — invalidated by:
 - `width` — canvas resize (live vs. 1920 px ghost export canvas)
 - `srcLen` — new data loaded (different number of points)
 - `srcT0` — re-anchored Strava points (first point's `.t` changed)
 - `durationMs` — new video loaded (different clip duration changes the temporal clip)
+- `mode` — switching between SEGMENT and FULL ROUTE changes the temporal clip
+- `zoom` — named scope presets change the bounding box, which changes all projected pixel coordinates in the cached `Path2D`
 
 **Build on cache miss:**
 
@@ -185,11 +188,41 @@ The ghost export canvas uses `EXPORT_W = 1920` as width. Its different `width` f
 
 ---
 
-## Canvas Zoom via Transform
+## Ghost Path (`fullPath2D`)
 
-The ZOOM slider (`1×` to `8×`, step `0.5`) is exposed in `app.html` and bound to `mapZoom = signal<number>(1)`. It is passed to `TelemetryOverlay` as `readonly mapZoom = input<number>(1)`.
+When `mapMode === 'full'`, `drawVectorMap()` builds a second `Path2D` — `fullPath2D` — that projects all `base` points (the full GPX ride) through the **same bounding box** as the segment path. This ghost path is stroked at reduced opacity before the segment path, giving the rider a visual reference of how the active clip fits within the full route.
 
-**Transform sequence:**
+**Construction:** `fullPath2D` is built immediately after the bbox expansion block (zoom sentinel logic), using the same `projectLatLon()` helper. Points that fall outside the bounding box still project to coordinates outside the canvas clip region and are naturally hidden — no explicit bounds check needed.
+
+**Caching:** `fullPath2D` is stored alongside `path2D` in `_path2DCache` and rebuilt on the same cache miss conditions. It is `null` when the map is hidden (`showMap === false`) to avoid unnecessary work.
+
+**Rendering order:** ghost path → segment path → position dot. The ghost is drawn at `ctx.globalAlpha ≈ 0.3` inside `ctx.save()/ctx.restore()`.
+
+---
+
+## Canvas Zoom — Dual Approach
+
+`mapZoom` is a `WritableSignal<number>` that encodes two distinct zoom strategies via its value range. It is passed to `TelemetryOverlay` as `readonly mapZoom = input<number>(1)`.
+
+### Named Scope Presets (zoom ≤ 0) — Bounding Box Expansion
+
+Values `-2`, `-1`, and `0` are sentinel integers that expand the geographic bounding box before Path2D coordinates are projected. This brings new geographic context into view — unlike `ctx.scale`, which only resizes what was already visible.
+
+| Value | Label | Strategy |
+|---|---|---|
+| `-2` | FULL MAP | Replace segment bbox with the entire ride's lat/lon extent (all `base` points) |
+| `-1` | MID MAP | Widen segment bbox by ×4 (pad each side by `1.5 × segment extent`) |
+| `0` | LOCAL MAP | Widen segment bbox by 50% (pad each side by `0.25 × segment extent`) |
+
+**Why bbox expansion, not `ctx.scale`:** `ctx.scale(0.3)` compresses the already-projected path to 30% of its size — it does not reveal geographic data outside the original clip's extent. Named scope presets change the coordinate space at cache-build time, making the full ride's geography the projection reference. The ghost path (`fullPath2D`) projects all `base` points through this same expanded bbox, so distant road segments become visible within the map box.
+
+**Critical:** Because bbox expansion changes all projected pixel coordinates, `zoom` is part of the Path2D cache key. Switching scope triggers a one-time O(N) cache rebuild, not 60 Hz work.
+
+Named scope buttons are only rendered in `app.html` when `mapMode() === 'full'`. Switching back to SEGMENT resets zoom to 1 if the current value is < 1 (handled in `setMapMode()`).
+
+### Numeric Zoom-In (zoom > 1) — Canvas Scale Transform
+
+Values `1`, `2`, `3`, `5` zoom in around the current position dot using `ctx.translate/scale/translate`:
 
 ```typescript
 const zoom = this.mapZoom();
@@ -214,8 +247,8 @@ ctx.arc(dotX, dotY, DOT_RADIUS, 0, Math.PI * 2);
 ctx.fill();
 ```
 
-**Why draw the dot after `restore()`:** The dot is the current position indicator. It should always sit at its correct projected pixel and at a fixed visual size. If drawn inside the zoom transform, it would both move (because the route shifts around it) and scale up, producing a large off-centre circle.
+**Why draw the dot after `restore()`:** The dot must always sit at its correct projected pixel and at a fixed visual size. Inside the zoom transform, it would both move and scale up, producing a large off-centre circle.
 
-**`lineWidth` at zoom:** `ctx.scale(zoom)` scales all coordinates including `lineWidth`. At `lineWidth = 2` and `zoom = 4`, the stroke visually appears 8 px wide. This is intentional — slightly thicker lines at high zoom improve legibility against the video background.
+**`lineWidth` at zoom:** `ctx.scale(zoom)` scales all coordinates including `lineWidth`. At `lineWidth = 2` and `zoom = 4`, the stroke visually appears 8 px wide — intentional, improves legibility.
 
-**`ctx.clip()` is mandatory.** Without it, a zoomed route at 8× will extend far outside the map box and overwrite the speed bar, G-force bar, and other HUD elements.
+**`ctx.clip()` is mandatory.** Without it, a zoomed route will extend outside the map box and overwrite the speed bar and G-force HUD elements.

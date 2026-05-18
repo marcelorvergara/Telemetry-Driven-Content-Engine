@@ -747,6 +747,7 @@
   // Onboarding: vertical stack; → arrows are redundant next to the step numbers.
   .onboarding-strip {
     flex-direction: column;
+    align-items: flex-start;
     gap: 0.4rem;
   }
   .onboard-arrow { display: none; }

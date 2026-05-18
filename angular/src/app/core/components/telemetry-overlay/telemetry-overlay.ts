@@ -52,6 +52,7 @@ export class TelemetryOverlay implements OnDestroy {
   readonly syncOffsetMs    = input<number>(0);
   readonly telemetrySource = input<'GoPro' | 'Strava'>('GoPro');
   readonly mapZoom         = input<number>(1);
+  readonly mapMode         = input<'segment' | 'full'>('segment');
 
   private readonly canvasRef    = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly ngZone       = inject(NgZone);
@@ -69,9 +70,10 @@ export class TelemetryOverlay implements OnDestroy {
 
   private _path2DCache: {
     path2D: Path2D;
+    fullPath2D: Path2D | null;
     clippedPoints: Array<{ t: number; lat: number; lon: number; fix?: number }>;
     bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number };
-    cacheKey: { width: number; srcLen: number; srcT0: number; durationMs: number };
+    cacheKey: { width: number; srcLen: number; srcT0: number; durationMs: number; mode: 'segment' | 'full'; zoom: number };
   } | null = null;
 
   // ── Visual decay state ───────────────────────────────────────────────────
@@ -186,12 +188,12 @@ export class TelemetryOverlay implements OnDestroy {
       if (this.showMap()) {
         if (this.telemetrySource() === 'Strava') {
           if (exportStrava.length > 0) {
-            this.drawVectorMap(ghostCtx, EXPORT_W, exportStrava, exportRenderMs, theme, true);
+            this.drawVectorMap(ghostCtx, EXPORT_W, exportStrava, exportRenderMs, theme, true, this.mapMode());
           }
         } else {
           const exportTelemetry = this.telemetry();
           if (exportTelemetry && exportTelemetry.gps.length > 0) {
-            this.drawVectorMap(ghostCtx, EXPORT_W, exportTelemetry.gps, videoEl.currentTime * 1000, theme, false);
+            this.drawVectorMap(ghostCtx, EXPORT_W, exportTelemetry.gps, videoEl.currentTime * 1000, theme, false, this.mapMode());
           }
         }
       }
@@ -337,10 +339,10 @@ export class TelemetryOverlay implements OnDestroy {
     if (this.showMap()) {
       if (this.telemetrySource() === 'Strava') {
         if (stravaPoints.length > 0) {
-          this.drawVectorMap(ctx, this.canvasWidth, stravaPoints, renderTimeMs, theme, true);
+          this.drawVectorMap(ctx, this.canvasWidth, stravaPoints, renderTimeMs, theme, true, this.mapMode());
         }
       } else if (telemetry.gps.length > 0) {
-        this.drawVectorMap(ctx, this.canvasWidth, telemetry.gps, relativeTimeMs, theme, false);
+        this.drawVectorMap(ctx, this.canvasWidth, telemetry.gps, relativeTimeMs, theme, false, this.mapMode());
       }
     }
 
@@ -479,8 +481,8 @@ export class TelemetryOverlay implements OnDestroy {
       const stripeW   = 8;
       const margin    = 16;
       const speedBoxH = Math.round(height * 0.09);
-      const gfBoxH    = Math.round(height * 0.055);
-      const boxW      = Math.round(width * 0.18);
+      const gfBoxH    = Math.round(height * (width < 360 ? 0.08 : 0.055));
+      const boxW      = Math.round(width * (width < 450 ? 0.20 : 0.18));
       const boxLeft   = anchors.speedX;
       const speedBoxY = anchors.gfBarY - speedBoxH;
 
@@ -561,8 +563,8 @@ export class TelemetryOverlay implements OnDestroy {
     anchors: LayoutAnchors,
   ): void {
     if (theme.layout === 'tiktok-cover') {
-      const gfBoxH  = Math.round(height * 0.055);
-      const boxW    = Math.round(width * 0.18);
+      const gfBoxH  = Math.round(height * (width < 360 ? 0.08 : 0.055));
+      const boxW    = Math.round(width * (width < 450 ? 0.20 : 0.18));
       const boxLeft = anchors.gfBarX;
       const gfBoxY  = anchors.gfBarY;
 
@@ -645,18 +647,20 @@ export class TelemetryOverlay implements OnDestroy {
       const stripeW  = 8;
       const gap      = 4;
       const boxLeft  = margin + stripeW + gap;
-      const boxW     = Math.round(width * 0.18);
-      const gfBarY   = Math.round(height * 0.80);
+      const narrow    = width < 450;
+      const compact   = width < 360;
+      const boxW      = Math.round(width * (narrow  ? 0.20 : 0.18));
+      const gfBarY    = Math.round(height * 0.80);
       const speedBoxH = Math.round(height * 0.09);
-      const bioBoxH   = Math.round(height * 0.055);
+      const bioBoxH   = Math.round(height * (compact ? 0.08 : 0.055));
       const labelPx   = Math.max(8, Math.round(bioBoxH * 0.38));
       const valuePx   = Math.max(9, Math.round(bioBoxH * 0.55));
       const speedBoxY = gfBarY - speedBoxH;
 
       const boxes: Array<{ label: string; value: string; fill: string }> = [
-        { label: 'ELE', value: `${ele.toFixed(1)} m`,  fill: theme.colors.accent },
-        { label: 'CAD', value: `${cad} RPM`,           fill: theme.colors.primary },
-        { label: 'HR',  value: `${hr} BPM`,            fill: hrCol },
+        { label: 'ELE', value: narrow ? `${ele.toFixed(1)}` : `${ele.toFixed(1)} m`,  fill: theme.colors.accent },
+        { label: 'CAD', value: narrow ? `${cad}`            : `${cad} RPM`,           fill: theme.colors.primary },
+        { label: 'HR',  value: narrow ? `${hr}`             : `${hr} BPM`,            fill: hrCol },
       ];
 
       // Draw from top down: ELE → CAD → HR (HR is closest to speed box)
@@ -692,10 +696,11 @@ export class TelemetryOverlay implements OnDestroy {
 
     // ── stacked (CLEAN_SPORT): clean right-side vertical panel ───────────
     if (theme.layout === 'stacked') {
+      const narrow  = width < 450;
       const rowH    = Math.max(22, Math.round(height * 0.042));
       const bigPx   = Math.max(13, Math.round(height * 0.032));
       const labPx   = Math.max(8,  Math.round(height * 0.020));
-      const panW    = Math.round(width * 0.14);
+      const panW    = Math.round(width * (narrow ? 0.20 : 0.14));
       const panX    = width - panW - 24;
       const panBotY = height - 16;
 
@@ -721,13 +726,15 @@ export class TelemetryOverlay implements OnDestroy {
         ctx.fillStyle = color;
         ctx.fillText(value, panX + labPx + 6, rowY);
 
-        // Small unit
-        const valW  = ctx.measureText(value).width;
-        ctx.font    = `${labPx}px ${theme.font.primary}`;
-        ctx.fillStyle = theme.colors.text;
-        ctx.globalAlpha = 0.7;
-        ctx.fillText(unit, panX + labPx + 6 + valW + 4, rowY);
-        ctx.globalAlpha = 1.0;
+        // Small unit — omitted on narrow screens; icons carry the semantic meaning
+        if (!narrow) {
+          const valW  = ctx.measureText(value).width;
+          ctx.font    = `${labPx}px ${theme.font.primary}`;
+          ctx.fillStyle = theme.colors.text;
+          ctx.globalAlpha = 0.7;
+          ctx.fillText(unit, panX + labPx + 6 + valW + 4, rowY);
+          ctx.globalAlpha = 1.0;
+        }
 
         ctx.restore();
       });
@@ -832,6 +839,7 @@ export class TelemetryOverlay implements OnDestroy {
     renderTimeMs: number,
     theme: ThemeConfig,
     useLinearInterp: boolean,
+    mapMode: 'segment' | 'full',
   ): void {
     // GoPro: keep only fix >= 2 locked samples; fall back to all if none locked.
     // Strava: fix is undefined for all points — passes the filter, uses full array.
@@ -851,17 +859,19 @@ export class TelemetryOverlay implements OnDestroy {
     // Video duration rounded to ms — used as a stable cache-key component.
     const rawDuration = this.videoEl().duration;
     const durationMs  = isFinite(rawDuration) ? Math.round(rawDuration * 1000) : 0;
+    const zoom        = this.mapZoom();
 
     // ── Path2D cache ────────────────────────────────────────────────────────
-    // Rebuild only when source data, canvas width, or video duration changes.
+    // Rebuild when source data, canvas width, video duration, map mode, or zoom scope changes.
     const ck = this._path2DCache?.cacheKey;
-    if (!ck || ck.width !== width || ck.srcLen !== base.length || ck.srcT0 !== base[0].t || ck.durationMs !== durationMs) {
+    if (!ck || ck.width !== width || ck.srcLen !== base.length || ck.srcT0 !== base[0].t || ck.durationMs !== durationMs || ck.mode !== mapMode || ck.zoom !== zoom) {
       // Temporal clip — only the portion of the route that the video covers.
       const clipped = durationMs > 0
         ? base.filter(p => p.t >= 0 && p.t <= durationMs)
         : base;
       if (clipped.length < 2) return;
 
+      // Segment bounding box — always the starting point.
       let minLat = clipped[0].lat, maxLat = clipped[0].lat;
       let minLon = clipped[0].lon, maxLon = clipped[0].lon;
       for (const { lat, lon } of clipped) {
@@ -871,7 +881,31 @@ export class TelemetryOverlay implements OnDestroy {
         if (lon > maxLon) maxLon = lon;
       }
 
-      // O(N) path build — happens once per cache miss, never inside the hot loop.
+      // Named scope presets expand or replace the bounding box.
+      // zoom >= 1: keep segment bbox; ctx.scale handles zoom-in.
+      // zoom = 0  (LOCAL MAP):  widen segment bbox by 50 % on each side.
+      // zoom = -1 (MID MAP):   widen segment bbox ×4 (1.5 each side).
+      // zoom = -2 (FULL MAP):  replace with the full ride's bbox.
+      if (zoom === -2) {
+        for (const { lat, lon } of base) {
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+          if (lon < minLon) minLon = lon;
+          if (lon > maxLon) maxLon = lon;
+        }
+      } else if (zoom === -1) {
+        const latPad = (maxLat - minLat) * 1.5;
+        const lonPad = (maxLon - minLon) * 1.5;
+        minLat -= latPad; maxLat += latPad;
+        minLon -= lonPad; maxLon += lonPad;
+      } else if (zoom === 0) {
+        const latPad = (maxLat - minLat) * 0.25;
+        const lonPad = (maxLon - minLon) * 0.25;
+        minLat -= latPad; maxLat += latPad;
+        minLon -= lonPad; maxLon += lonPad;
+      }
+
+      // O(N) segment path build — once per cache miss.
       const p2d = new Path2D();
       const [sx, sy] = this.projectLatLon(clipped[0].lat, clipped[0].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
       p2d.moveTo(sx, sy);
@@ -880,15 +914,30 @@ export class TelemetryOverlay implements OnDestroy {
         p2d.lineTo(px, py);
       }
 
+      // Full-ride ghost path projected through the same (possibly expanded) bbox.
+      // Points outside the bbox project outside the map box and are clipped naturally.
+      let fullPath2D: Path2D | null = null;
+      if (mapMode === 'full') {
+        const fp2d = new Path2D();
+        const [fsx, fsy] = this.projectLatLon(base[0].lat, base[0].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+        fp2d.moveTo(fsx, fsy);
+        for (let i = 1; i < base.length; i++) {
+          const [fpx, fpy] = this.projectLatLon(base[i].lat, base[i].lon, minLat, maxLat, minLon, maxLon, bx, by, bw, bh);
+          fp2d.lineTo(fpx, fpy);
+        }
+        fullPath2D = fp2d;
+      }
+
       this._path2DCache = {
         path2D: p2d,
+        fullPath2D,
         clippedPoints: clipped,
         bounds: { minLat, maxLat, minLon, maxLon },
-        cacheKey: { width, srcLen: base.length, srcT0: base[0].t, durationMs },
+        cacheKey: { width, srcLen: base.length, srcT0: base[0].t, durationMs, mode: mapMode, zoom },
       };
     }
 
-    const { path2D, clippedPoints, bounds: { minLat, maxLat, minLon, maxLon } } = this._path2DCache!;
+    const { path2D, fullPath2D, clippedPoints, bounds: { minLat, maxLat, minLon, maxLon } } = this._path2DCache!;
 
     // ── Background ──────────────────────────────────────────────────────────
     // save/restore isolates globalAlpha — leak would taint the entire 60 Hz HUD.
@@ -925,27 +974,39 @@ export class TelemetryOverlay implements OnDestroy {
     }
 
     // ── Route path via cached Path2D + optional zoom transform ──────────────
-    // ctx.clip() confines the zoomed path to the map box — prevents it bleeding
+    // ctx.clip() confines the zoomed paths to the map box — prevents bleeding
     // into the speed/G-force HUD at high zoom levels.
-    const zoom = this.mapZoom();
     ctx.save();
     ctx.beginPath();
     ctx.rect(width - mapW - 16, 16, mapW, mapH);
     ctx.clip();
 
-    ctx.shadowBlur  = 0;
-    ctx.strokeStyle = '#00FFFF';
-    ctx.lineWidth   = 2;
-    ctx.lineJoin    = 'round';
-    ctx.lineCap     = 'round';
-
     if (zoom > 1) {
-      // Pin the dot on-screen; route zooms around it.
+      // Pin the dot on-screen; segment path zooms in around it.
       ctx.translate(dotX, dotY);
       ctx.scale(zoom, zoom);
       ctx.translate(-dotX, -dotY);
     }
 
+    // Ghost: full-ride path drawn first so the segment path paints over it.
+    if (fullPath2D) {
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = '#00FFFF';
+      ctx.lineWidth   = 1;
+      ctx.lineJoin    = 'round';
+      ctx.lineCap     = 'round';
+      ctx.shadowBlur  = 0;
+      ctx.stroke(fullPath2D);
+      ctx.restore();
+    }
+
+    // Active segment — full opacity on top of the ghost.
+    ctx.shadowBlur  = 0;
+    ctx.strokeStyle = '#00FFFF';
+    ctx.lineWidth   = 2;
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
     ctx.stroke(path2D);
     ctx.restore();
 

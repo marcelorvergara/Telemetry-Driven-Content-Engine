@@ -90,6 +90,13 @@
             <div class="alpha-control">
               <span class="alpha-label">ZOOM</span>
               <div class="theme-switcher">
+                @if (mapMode() === 'full') {
+                  @for (z of zoomOutLevels; track z.value) {
+                    <button class="theme-btn"
+                      [class.active]="mapZoom() === z.value"
+                      (click)="mapZoom.set(z.value)">{{ z.label }}</button>
+                  }
+                }
                 @for (z of zoomLevels; track z) {
                   <button class="theme-btn"
                     [class.active]="mapZoom() === z"
@@ -97,6 +104,19 @@
                 }
               </div>
             </div>
+            @if (stravaGps().length > 0) {
+              <div class="alpha-control">
+                <span class="alpha-label">SCOPE</span>
+                <div class="theme-switcher">
+                  <button class="theme-btn"
+                    [class.active]="mapMode() === 'segment'"
+                    (click)="setMapMode('segment')">SEGMENT</button>
+                  <button class="theme-btn"
+                    [class.active]="mapMode() === 'full'"
+                    (click)="setMapMode('full')">FULL ROUTE</button>
+                </div>
+              </div>
+            }
           }
         </div>
       </div>
@@ -182,7 +202,8 @@
           [stravaGps]="stravaGps()"
           [syncOffsetMs]="syncOffsetMs()"
           [telemetrySource]="telemetrySource()"
-          [mapZoom]="mapZoom()" />
+          [mapZoom]="mapZoom()"
+          [mapMode]="mapMode()" />
       </div>
     </section>
 

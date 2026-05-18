@@ -40,9 +40,15 @@ export class AppComponent implements OnInit, OnDestroy {
   pipelineError: string | null = null;
 
   readonly allThemes       = ALL_THEMES;
+  readonly zoomOutLevels: Array<{ label: string; value: number }> = [
+    { label: 'FULL MAP',  value: -2 },
+    { label: 'MID MAP',   value: -1 },
+    { label: 'LOCAL MAP', value:  0 },
+  ];
   readonly zoomLevels      = [1, 2, 3, 5];
   readonly showMapPath     = signal<boolean>(false);
   readonly mapZoom         = signal<number>(1);
+  readonly mapMode         = signal<'segment' | 'full'>('segment');
   readonly telemetrySource = signal<'GoPro' | 'Strava'>('GoPro');
   readonly stravaGps          = signal<StravaGpsPoint[]>([]);
   readonly syncOffsetMs       = signal<number>(0);
@@ -106,6 +112,9 @@ export class AppComponent implements OnInit, OnDestroy {
       // GPX parsed after MP4 so videoStartEpoch is known — no re-anchor needed.
       const gpxFile = new File([gpxBlob], 'strava 10052026.gpx', { type: 'application/gpx+xml' });
       await this.processGpxFile(gpxFile);
+
+      this.showMapPath.set(true);
+      this.mapMode.set('full');
 
     } catch (err) {
       this.pipelineError = String(err);
@@ -221,6 +230,13 @@ export class AppComponent implements OnInit, OnDestroy {
 
   setTelemetrySource(source: 'GoPro' | 'Strava'): void {
     this.telemetrySource.set(source);
+  }
+
+  setMapMode(mode: 'segment' | 'full'): void {
+    this.mapMode.set(mode);
+    if (mode === 'segment' && this.mapZoom() < 1) {
+      this.mapZoom.set(1);
+    }
   }
 
   onSyncOffsetChange(offsetMs: number): void {
