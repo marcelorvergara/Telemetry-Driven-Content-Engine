@@ -204,25 +204,45 @@ When `mapMode === 'full'`, `drawVectorMap()` builds a second `Path2D` — `fullP
 
 `mapZoom` is a `WritableSignal<number>` that encodes two distinct zoom strategies via its value range. It is passed to `TelemetryOverlay` as `readonly mapZoom = input<number>(1)`.
 
+### Zoom Slider
+
+`mapZoom` is driven by a single continuous `<input type="range" min="-2" max="8" step="0.1">` in `app.html`. The `[min]` attribute is dynamic: `-2` in `full` map mode, `1` in `segment` mode — bbox presets are unreachable in segment scope.
+
+A `zoomLabel` computed signal in `AppComponent` translates the float to a display string (FULL / MID / LOCAL / N×). The float itself passes directly into `drawVectorMap()`.
+
+### `cacheZoom` — Decoupling the Cache Key from the Slider Float
+
+**Never store the raw `zoom` float in the Path2D cache key.** The slider emits a new float on every `input` event (up to 60+ per second during drag). Storing it as-is causes a 100% cache miss rate and an O(N) `Path2D` rebuild on every frame during drag.
+
+```typescript
+const zoom      = this.mapZoom();
+const cacheZoom = zoom <= 0 ? Math.round(zoom) : 1;
+```
+
+- `zoom ≤ 0` → named scope zone. `Math.round()` snaps the float to the nearest integer sentinel used by the bbox expansion block (`-2`, `-1`, `0`).
+- `zoom > 0` → matrix zone. All values collapse to `cacheZoom = 1` — the bbox is identical for any positive zoom; only the `ctx.scale` matrix changes at render time, not the `Path2D` geometry.
+
+The cache key field `zoom` always stores `cacheZoom`. Dragging the slider from 1.0 to 7.9 causes **zero cache misses**.
+
 ### Named Scope Presets (zoom ≤ 0) — Bounding Box Expansion
 
 Values `-2`, `-1`, and `0` are sentinel integers that expand the geographic bounding box before Path2D coordinates are projected. This brings new geographic context into view — unlike `ctx.scale`, which only resizes what was already visible.
 
 | Value | Label | Strategy |
 |---|---|---|
-| `-2` | FULL MAP | Replace segment bbox with the entire ride's lat/lon extent (all `base` points) |
-| `-1` | MID MAP | Widen segment bbox by ×4 (pad each side by `1.5 × segment extent`) |
-| `0` | LOCAL MAP | Widen segment bbox by 50% (pad each side by `0.25 × segment extent`) |
+| `-2` | FULL | Replace segment bbox with the entire ride's lat/lon extent (all `base` points) |
+| `-1` | MID | Widen segment bbox by ×4 (pad each side by `1.5 × segment extent`) |
+| `0` | LOCAL | Widen segment bbox by 50% (pad each side by `0.25 × segment extent`) |
 
 **Why bbox expansion, not `ctx.scale`:** `ctx.scale(0.3)` compresses the already-projected path to 30% of its size — it does not reveal geographic data outside the original clip's extent. Named scope presets change the coordinate space at cache-build time, making the full ride's geography the projection reference. The ghost path (`fullPath2D`) projects all `base` points through this same expanded bbox, so distant road segments become visible within the map box.
 
-**Critical:** Because bbox expansion changes all projected pixel coordinates, `zoom` is part of the Path2D cache key. Switching scope triggers a one-time O(N) cache rebuild, not 60 Hz work.
+**Critical:** Because bbox expansion changes all projected pixel coordinates, `zoom` (stored as `cacheZoom`) is part of the Path2D cache key. Switching scope triggers a one-time O(N) cache rebuild, not 60 Hz work.
 
-Named scope buttons are only rendered in `app.html` when `mapMode() === 'full'`. Switching back to SEGMENT resets zoom to 1 if the current value is < 1 (handled in `setMapMode()`).
+Slider `[min]` is set to `1` in segment mode, preventing bbox presets. Switching back to SEGMENT resets zoom to 1 if the current value is < 1 (handled in `setMapMode()`).
 
 ### Numeric Zoom-In (zoom > 1) — Canvas Scale Transform
 
-Values `1`, `2`, `3`, `5` zoom in around the current position dot using `ctx.translate/scale/translate`:
+Continuous slider values above `1` zoom in around the current position dot using `ctx.translate/scale/translate`:
 
 ```typescript
 const zoom = this.mapZoom();
@@ -252,3 +272,42 @@ ctx.fill();
 **`lineWidth` at zoom:** `ctx.scale(zoom)` scales all coordinates including `lineWidth`. At `lineWidth = 2` and `zoom = 4`, the stroke visually appears 8 px wide — intentional, improves legibility.
 
 **`ctx.clip()` is mandatory.** Without it, a zoomed route will extend outside the map box and overwrite the speed bar and G-force HUD elements.
+
+---
+
+## Double-Stroke Contrast Outline
+
+The active route path uses a **double-stroke** technique to render a Google Maps-style high-contrast border. Each `Path2D` is stroked twice using the **same cached object** — no additional allocation.
+
+**Stroke order (both segment and ghost paths):**
+
+1. **Outline** — `rgba(0,0,0,0.8)`, `lineWidth = theme.map.strokeWidth + 4`, stroked first (underneath).
+2. **Primary** — `theme.colors.primary`, `lineWidth = theme.map.strokeWidth`, stroked second (on top).
+
+Each stroke is wrapped in its own `ctx.save()` / `ctx.restore()` pair so alpha and style resets are guaranteed:
+
+```typescript
+// Outline
+ctx.save();
+ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+ctx.lineWidth   = theme.map.strokeWidth + 4;
+ctx.lineJoin    = 'round';
+ctx.lineCap     = 'round';
+ctx.stroke(path2D);
+ctx.restore();
+
+// Primary
+ctx.save();
+ctx.strokeStyle = theme.colors.primary;
+ctx.lineWidth   = theme.map.strokeWidth;
+ctx.lineJoin    = 'round';
+ctx.lineCap     = 'round';
+ctx.stroke(path2D);
+ctx.restore();
+```
+
+**Ghost path** additionally sets `ctx.globalAlpha = 0.25` inside each of its two `save()`/`restore()` pairs.
+
+**Maximum `save()` nesting depth inside `drawVectorMap()` is 2:** the outer clip/transform envelope, plus one stroke block at a time. The stroke blocks close before the clip envelope closes — they do not stack.
+
+**Do not use `theme.colors.background`** — `ThemeConfig` has no `background` colour token. The outline is always the hardcoded `rgba(0,0,0,0.8)`, which provides sufficient contrast on any theme over any video content.

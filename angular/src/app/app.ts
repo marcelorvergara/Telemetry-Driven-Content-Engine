@@ -40,14 +40,16 @@ export class AppComponent implements OnInit, OnDestroy {
   pipelineError: string | null = null;
 
   readonly allThemes       = ALL_THEMES;
-  readonly zoomOutLevels: Array<{ label: string; value: number }> = [
-    { label: 'FULL MAP',  value: -2 },
-    { label: 'MID MAP',   value: -1 },
-    { label: 'LOCAL MAP', value:  0 },
-  ];
-  readonly zoomLevels      = [1, 2, 3, 5];
-  readonly showMapPath     = signal<boolean>(false);
-  readonly mapZoom         = signal<number>(1);
+  readonly showMapPath  = signal<boolean>(false);
+  readonly mapZoom      = signal<number>(1);
+  readonly zoomLabel    = computed(() => {
+    const z = this.mapZoom();
+    if (z < -1.5) return 'FULL';
+    if (z < -0.5) return 'MID';
+    if (z <= 0)   return 'LOCAL';
+    if (z <= 1)   return '1×';
+    return `${z.toFixed(1)}×`;
+  });
   readonly mapMode         = signal<'segment' | 'full'>('segment');
   readonly telemetrySource = signal<'GoPro' | 'Strava'>('GoPro');
   readonly stravaGps          = signal<StravaGpsPoint[]>([]);

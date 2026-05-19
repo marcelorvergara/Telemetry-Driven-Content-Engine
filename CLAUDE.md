@@ -194,6 +194,47 @@ The public showcase at `vergaraverse.web.app` auto-loads a GoPro clip + Strava G
 - `ctx.restore()` is the only reliable reset. An explicit `ctx.globalAlpha = 1.0` after the draw is an acceptable fallback only if no other state (transform, clip, composite) was modified.
 - This rule applies to the map background block in `drawVectorMap` and to every future Canvas primitive that needs transparency.
 
+### Canvas Rendering — Double-Stroke Contrast Outline
+
+The active route path (segment and ghost) uses a **double-stroke** technique for a Google Maps-style high-contrast border. Each `Path2D` is stroked twice using the **same cached object** — zero additional allocation:
+
+1. **Outline stroke** — `rgba(0,0,0,0.8)`, `lineWidth = theme.map.strokeWidth + 4`, drawn first (underneath).
+2. **Primary stroke** — `theme.colors.primary`, `lineWidth = theme.map.strokeWidth`, drawn second (on top).
+
+Each stroke is wrapped in its own `ctx.save()` / `ctx.restore()` pair. The ghost path additionally sets `ctx.globalAlpha = 0.25` for both strokes. Maximum nesting depth inside `drawVectorMap()` is **2** (outer clip envelope + one stroke block) — the stroke pairs close before the clip envelope closes.
+
+**Forbidden shortcuts:**
+- Do not combine both strokes into one `save()`/`restore()` — a shared `globalAlpha` would apply to the outline and primary simultaneously, making it impossible to independently control ghost opacity.
+- Do not use `theme.colors.background` for the outline — `ThemeConfig` has no `background` token. Use the hardcoded `rgba(0,0,0,0.8)` which works on any theme over any video content.
+
+### Canvas Zoom — Continuous Slider and `cacheZoom` Decoupling
+
+`mapZoom` is a `WritableSignal<number>` driven by a single `<input type="range" min="-2" max="8" step="0.1">` in `app.html`. The UI label is produced by a `zoomLabel` computed signal:
+
+```typescript
+readonly zoomLabel = computed(() => {
+  const z = this.mapZoom();
+  if (z < -1.5) return 'FULL';
+  if (z < -0.5) return 'MID';
+  if (z <= 0)   return 'LOCAL';
+  if (z <= 1)   return '1×';
+  return `${z.toFixed(1)}×`;
+});
+```
+
+The slider `[min]` is dynamic: `-2` in `full` map mode, `1` in `segment` mode — this prevents bbox presets from being reachable when the scope is locked to the current clip.
+
+**`cacheZoom` pattern — mandatory for Path2D cache correctness:**
+
+```typescript
+const cacheZoom = zoom <= 0 ? Math.round(zoom) : 1;
+```
+
+- `zoom <= 0` → named scope presets. `Math.round()` snaps fractional slider values to the nearest integer sentinel (`-2`, `-1`, `0`).
+- `zoom > 0` → canvas matrix zone. All values share `cacheZoom = 1` — the same bbox, the same projected `Path2D`.
+
+The Path2D cache key stores `cacheZoom`, **not** the raw `zoom` float. Without this decoupling, every slider drag event (60+ per second) would produce a cache miss and trigger an O(N) `Path2D` rebuild. With it, matrix-zone slider drags cause zero cache misses.
+
 ### ThemeConfig.map — Aesthetics Sub-object
 
 `ThemeConfig` carries a `map` sub-object that owns all map background aesthetics:

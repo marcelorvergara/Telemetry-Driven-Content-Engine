@@ -859,12 +859,15 @@ export class TelemetryOverlay implements OnDestroy {
     // Video duration rounded to ms — used as a stable cache-key component.
     const rawDuration = this.videoEl().duration;
     const durationMs  = isFinite(rawDuration) ? Math.round(rawDuration * 1000) : 0;
-    const zoom        = this.mapZoom();
+    const zoom      = this.mapZoom();
+    // Continuous slider: only the bbox preset zone (≤ 0) changes projected coordinates.
+    // Matrix zoom (> 0) is applied via ctx.scale — Path2D coordinates are stable.
+    const cacheZoom = zoom <= 0 ? Math.round(zoom) : 1;
 
     // ── Path2D cache ────────────────────────────────────────────────────────
-    // Rebuild when source data, canvas width, video duration, map mode, or zoom scope changes.
+    // Rebuild when source data, canvas width, video duration, map mode, or bbox zoom changes.
     const ck = this._path2DCache?.cacheKey;
-    if (!ck || ck.width !== width || ck.srcLen !== base.length || ck.srcT0 !== base[0].t || ck.durationMs !== durationMs || ck.mode !== mapMode || ck.zoom !== zoom) {
+    if (!ck || ck.width !== width || ck.srcLen !== base.length || ck.srcT0 !== base[0].t || ck.durationMs !== durationMs || ck.mode !== mapMode || ck.zoom !== cacheZoom) {
       // Temporal clip — only the portion of the route that the video covers.
       const clipped = durationMs > 0
         ? base.filter(p => p.t >= 0 && p.t <= durationMs)
@@ -886,19 +889,19 @@ export class TelemetryOverlay implements OnDestroy {
       // zoom = 0  (LOCAL MAP):  widen segment bbox by 50 % on each side.
       // zoom = -1 (MID MAP):   widen segment bbox ×4 (1.5 each side).
       // zoom = -2 (FULL MAP):  replace with the full ride's bbox.
-      if (zoom === -2) {
+      if (cacheZoom === -2) {
         for (const { lat, lon } of base) {
           if (lat < minLat) minLat = lat;
           if (lat > maxLat) maxLat = lat;
           if (lon < minLon) minLon = lon;
           if (lon > maxLon) maxLon = lon;
         }
-      } else if (zoom === -1) {
+      } else if (cacheZoom === -1) {
         const latPad = (maxLat - minLat) * 1.5;
         const lonPad = (maxLon - minLon) * 1.5;
         minLat -= latPad; maxLat += latPad;
         minLon -= lonPad; maxLon += lonPad;
-      } else if (zoom === 0) {
+      } else if (cacheZoom === 0) {
         const latPad = (maxLat - minLat) * 0.25;
         const lonPad = (maxLon - minLon) * 0.25;
         minLat -= latPad; maxLat += latPad;
@@ -933,7 +936,7 @@ export class TelemetryOverlay implements OnDestroy {
         fullPath2D,
         clippedPoints: clipped,
         bounds: { minLat, maxLat, minLon, maxLon },
-        cacheKey: { width, srcLen: base.length, srcT0: base[0].t, durationMs, mode: mapMode, zoom },
+        cacheKey: { width, srcLen: base.length, srcT0: base[0].t, durationMs, mode: mapMode, zoom: cacheZoom },
       };
     }
 
@@ -992,8 +995,18 @@ export class TelemetryOverlay implements OnDestroy {
     if (fullPath2D) {
       ctx.save();
       ctx.globalAlpha = 0.25;
-      ctx.strokeStyle = '#00FFFF';
-      ctx.lineWidth   = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+      ctx.lineWidth   = theme.map.strokeWidth + 4;
+      ctx.lineJoin    = 'round';
+      ctx.lineCap     = 'round';
+      ctx.shadowBlur  = 0;
+      ctx.stroke(fullPath2D);
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = theme.colors.primary;
+      ctx.lineWidth   = theme.map.strokeWidth;
       ctx.lineJoin    = 'round';
       ctx.lineCap     = 'round';
       ctx.shadowBlur  = 0;
@@ -1001,13 +1014,25 @@ export class TelemetryOverlay implements OnDestroy {
       ctx.restore();
     }
 
-    // Active segment — full opacity on top of the ghost.
-    ctx.shadowBlur  = 0;
-    ctx.strokeStyle = '#00FFFF';
-    ctx.lineWidth   = 2;
+    // Active segment — contrast outline first, theme primary colour on top.
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.lineWidth   = theme.map.strokeWidth + 4;
     ctx.lineJoin    = 'round';
     ctx.lineCap     = 'round';
+    ctx.shadowBlur  = 0;
     ctx.stroke(path2D);
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = theme.colors.primary;
+    ctx.lineWidth   = theme.map.strokeWidth;
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
+    ctx.shadowBlur  = 0;
+    ctx.stroke(path2D);
+    ctx.restore();
+
     ctx.restore();
 
     // Dot drawn after restore — always at its projected canvas position,
