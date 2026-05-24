@@ -54,4 +54,4 @@ jobs:
             NEON_DB_URL=${{ secrets.NEON_DB_URL }}
             NEON_DB_USERNAME=${{ secrets.NEON_DB_USERNAME }}
             NEON_DB_PASSWORD=${{ secrets.NEON_DB_PASSWORD }}
-	    GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}	
+            GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
