@@ -1,12 +1,16 @@
 package com.vergaraverse.api.domain.entity;
 
+import com.vergaraverse.api.domain.model.StreetTimelineEntry;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.util.List;
 
 @Getter
 @Setter
@@ -47,6 +51,11 @@ public class ClipMetadata {
     // Stored as a native PostgreSQL bigint[] — no join table needed.
     @Column(columnDefinition = "bigint[]")
     private Long[] highlights;
+
+    // Sparse reverse-geocoding timeline: one street name per ~60 s of video.
+    // Stored as native PostgreSQL jsonb — ddl-auto:update adds the column on boot.
+    @JdbcTypeCode(SqlTypes.JSON)
+    private List<StreetTimelineEntry> streetTimeline;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)

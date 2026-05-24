@@ -9,7 +9,8 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { TelemetryResult, GPS9Sample, StravaGpsPoint } from '../../models/telemetry.model';
+import { TelemetryResult, StravaGpsPoint } from '../../models/telemetry.model';
+import { StreetTimelineEntry } from '../../models/clip.model';
 import { TelemetryMathService } from '../../services/telemetry-math';
 import { ThemeService } from '../../services/theme.service';
 import { ThemeConfig } from '../../models/theme.model';
@@ -53,6 +54,8 @@ export class TelemetryOverlay implements OnDestroy {
   readonly telemetrySource = input<'GoPro' | 'Strava'>('GoPro');
   readonly mapZoom         = input<number>(1);
   readonly mapMode         = input<'segment' | 'full'>('segment');
+  readonly streetTimeline   = input<StreetTimelineEntry[]>([]);
+  readonly showStreetName   = input<boolean>(true);
 
   private readonly canvasRef    = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly ngZone       = inject(NgZone);
@@ -67,6 +70,8 @@ export class TelemetryOverlay implements OnDestroy {
   private canvasWidth  = 0;
   private canvasHeight = 0;
 
+
+  private _streetDiagDone = false;
 
   private _path2DCache: {
     path2D: Path2D;
@@ -184,6 +189,9 @@ export class TelemetryOverlay implements OnDestroy {
       ghostCtx.fillRect(0, 0, EXPORT_W, EXPORT_H);
       this.drawSpeedReadout(ghostCtx, EXPORT_W, EXPORT_H, exportSpeed, theme, anchors);
       this.drawGForceBar(ghostCtx, EXPORT_W, EXPORT_H, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
+      if (this.showStreetName()) {
+        this.drawStreetName(ghostCtx, EXPORT_W, EXPORT_H, videoEl.currentTime * 1000, theme, anchors);
+      }
 
       if (this.showMap()) {
         if (this.telemetrySource() === 'Strava') {
@@ -335,6 +343,13 @@ export class TelemetryOverlay implements OnDestroy {
     const anchors = this.resolveLayout(theme.layout, this.canvasWidth, this.canvasHeight);
     this.drawSpeedReadout(ctx, this.canvasWidth, this.canvasHeight, speed, theme, anchors);
     this.drawGForceBar(ctx, this.canvasWidth, this.canvasHeight, this.currentDisplayedGForce, this.peakGForce, theme, anchors);
+    if (!this._streetDiagDone && this.streetTimeline().length > 0) {
+      this._streetDiagDone = true;
+      console.log('[STREET DIAG] showStreetName:', this.showStreetName(), '| timeline:', JSON.stringify(this.streetTimeline()));
+    }
+    if (this.showStreetName()) {
+      this.drawStreetName(ctx, this.canvasWidth, this.canvasHeight, relativeTimeMs, theme, anchors);
+    }
 
     if (this.showMap()) {
       if (this.telemetrySource() === 'Strava') {
@@ -460,6 +475,81 @@ export class TelemetryOverlay implements OnDestroy {
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  // ── Street name lookup ───────────────────────────────────────────────────
+  // O(log N) floor search: returns the streetName of the last entry whose
+  // .t <= timeMs, or null when the timeline is empty or timeMs precedes all entries.
+
+  private findStreetAtTime(timeMs: number): string | null {
+    const timeline = this.streetTimeline();
+    if (timeline.length === 0) return null;
+    let lo = 0, hi = timeline.length - 1;
+    let result: string | null = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (timeline[mid].t <= timeMs) { result = timeline[mid].streetName; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    return result;
+  }
+
+  // Renders the current street name as a single line of canvas text.
+  // ctx.save/restore isolates font, fillStyle, shadowBlur, and textBaseline —
+  // no state leaks into adjacent draw calls.
+  private drawStreetName(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    timeMs: number,
+    theme: ThemeConfig,
+    anchors: LayoutAnchors,
+  ): void {
+    const raw = this.findStreetAtTime(timeMs);
+    if (!raw) return;
+
+    const MAX_CHARS = 20;
+    const label = raw.length > MAX_CHARS ? raw.slice(0, MAX_CHARS - 1) + '…' : raw;
+
+    // Minimum 14 px so the name is legible on small embedded canvases.
+    const streetPx = Math.max(14, Math.round(height * 0.032));
+
+    ctx.save();
+    ctx.textBaseline = 'alphabetic';
+    ctx.font         = `bold ${streetPx}px ${theme.font.primary}`;
+
+    if (theme.layout === 'tiktok-cover') {
+      // Positioned just above the G-force box (at 80% height), centered horizontally
+      // so it does not overlap the left-side solid blocks.
+      const gfBarY = Math.round(height * 0.80);
+      const y      = gfBarY - 10;
+      const textW  = ctx.measureText(label).width;
+      const padX   = 8;
+      const padY   = 4;
+      const bgX    = width / 2 - textW / 2 - padX;
+      const bgY    = y - streetPx - padY;
+      ctx.fillStyle   = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(bgX, bgY, textW + padX * 2, streetPx + padY * 2);
+      ctx.textAlign   = 'center';
+      ctx.fillStyle   = '#FFFFFF';
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur  = 6;
+      ctx.fillText(label, width / 2, y);
+      ctx.textAlign   = 'left';
+    } else {
+      // spread / stacked / dashboard: above the speed number column.
+      // Uses theme primary (same colour as the speed readout) with a matching glow
+      // so the label reads as part of the same HUD block.
+      const bigPx   = Math.max(16, Math.round(height * 0.095));
+      const smallPx = Math.max(10, Math.round(height * 0.042));
+      const y       = height - smallPx - bigPx - 16;
+      ctx.fillStyle   = theme.colors.primary;
+      ctx.shadowColor = theme.colors.primary;
+      ctx.shadowBlur  = 10;
+      ctx.fillText(label, anchors.speedX, y);
+    }
+
+    ctx.restore();
   }
 
   // ── Drawing primitives ───────────────────────────────────────────────────

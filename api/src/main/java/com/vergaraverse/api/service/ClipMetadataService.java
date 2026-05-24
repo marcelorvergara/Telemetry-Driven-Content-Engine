@@ -2,6 +2,7 @@ package com.vergaraverse.api.service;
 
 import com.vergaraverse.api.domain.entity.ClipMetadata;
 import com.vergaraverse.api.domain.entity.RideSession;
+import com.vergaraverse.api.domain.model.StreetTimelineEntry;
 import com.vergaraverse.api.domain.repository.ClipMetadataRepository;
 import com.vergaraverse.api.domain.repository.RideSessionRepository;
 import com.vergaraverse.api.web.dto.ClipMetadataDto;
@@ -46,7 +47,7 @@ public class ClipMetadataService {
     // or inserts a new row. This means re-parsing a file always refreshes the
     // stored summary without creating duplicates.
 
-    public ClipMetadataDto upsert(CreateClipRequest req) {
+    public ClipMetadataDto upsert(CreateClipRequest req, List<StreetTimelineEntry> streetTimeline) {
         ClipMetadata clip = clipRepo
                 .findByFilenameAndFileSize(req.filename(), req.fileSize())
                 .orElseGet(ClipMetadata::new);
@@ -62,6 +63,7 @@ public class ClipMetadataService {
         clip.setEndLon(req.endLon());
         clip.setGpsSource(req.gpsSource());
         clip.setHighlights(req.highlights());
+        clip.setStreetTimeline(streetTimeline.isEmpty() ? null : streetTimeline);
 
         // Session resolution: use the provided ID, or auto-create for new clips.
         // Existing clips keep their original session on re-parse (sessionId == null
@@ -96,7 +98,8 @@ public class ClipMetadataService {
                 c.getGpsSource(),
                 c.getHighlights(),
                 c.getParsedAt(),
-                c.getSessionId()   // FK mirror — no SELECT on ride_session
+                c.getSessionId(),   // FK mirror — no SELECT on ride_session
+                c.getStreetTimeline()
         );
     }
 }

@@ -275,6 +275,61 @@ ctx.fill();
 
 ---
 
+## Street Name HUD — `drawStreetName()`
+
+The street name overlay displays the current road name above the speed readout. It is driven by a `streetTimeline: StreetTimelineEntry[]` input (an array of `{ t: number; streetName: string }` objects sorted ascending by `t`) and a `showStreetName: boolean` input that gates rendering.
+
+### Data Flow
+
+```
+POST /api/clips (GPS snapshots)
+  → GeocodingService.resolveTimeline()   (Spring Boot, virtual threads, 3 s cap)
+  → ClipMetadataDto.streetTimeline
+  → AppComponent.streetTimeline signal
+  → TelemetryOverlay [streetTimeline] input
+  → drawStreetName() every 60 Hz frame
+```
+
+`SHOWCASE_STREET_TIMELINE` in `app.ts` is a hardcoded constant that bypasses the geocoding API for the public showcase clip, preserving API quota.
+
+### `findStreetAtTime()` — O(log N) Floor Search
+
+```typescript
+private findStreetAtTime(timeMs: number): string | null {
+  const timeline = this.streetTimeline();
+  if (timeline.length === 0) return null;
+  let lo = 0, hi = timeline.length - 1, result: string | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (timeline[mid].t <= timeMs) { result = timeline[mid].streetName; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return result;
+}
+```
+
+Returns the `streetName` of the **last entry whose `.t <= timeMs`** — the road the rider is currently on. Returns `null` before the first entry. This is a pure read with no allocations; safe to call on every 60 Hz frame.
+
+### `showStreetName` Toggle
+
+`AppComponent` owns `readonly showStreetName = signal<boolean>(true)`. The MAP control zone renders a STREET toggle before the PATH toggle. The signal is passed as `[showStreetName]="showStreetName()"` to the overlay. Both the live `drawFrame()` path and the export `onFrame` path guard `drawStreetName()` behind `if (this.showStreetName())`.
+
+### Rendering — Layout Branches
+
+`drawStreetName()` uses `ctx.save()` / `ctx.restore()` to isolate all font, fill, shadow, and alignment state. Two layout branches:
+
+**`tiktok-cover`** — centered above the G-force box (at 80% height). Draws a `rgba(0,0,0,0.65)` pill behind the text for contrast against the solid color blocks.
+
+**`spread` / `stacked` / `dashboard`** — positioned above the speed digit column. No background rectangle — the theme primary color with a matching glow (`shadowBlur: 10`) provides sufficient contrast against video content. The dark pill was removed to keep these layouts clean.
+
+### Geocoding Density Rule
+
+`SNAPSHOT_INTERVAL_MS = 15_000` (15 s) in `clip-api.service.ts`. At this interval a 75-second clip produces ~6 geocoding points, capturing street transitions within a 15-second window. **Do not raise this value above 30 000** — the previous value of `60 000` produced only 2 points for a 71-second clip, both often falling on the same street, causing the name to never change during playback.
+
+Note: existing clips in the database were geocoded at the old interval. Re-uploading a clip triggers fresh geocoding at the current density.
+
+---
+
 ## Double-Stroke Contrast Outline
 
 The active route path uses a **double-stroke** technique to render a Google Maps-style high-contrast border. Each `Path2D` is stroked twice using the **same cached object** — no additional allocation.

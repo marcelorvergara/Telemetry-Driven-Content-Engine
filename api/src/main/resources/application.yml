@@ -34,6 +34,10 @@ spring:
     # src/main/resources/db/migration/V1__create_schema.sql
     enabled: false
 
+geocoding:
+  google-maps:
+    api-key: ${GOOGLE_MAPS_API_KEY}
+
 server:
   port: 8080
 

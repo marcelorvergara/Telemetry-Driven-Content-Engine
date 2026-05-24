@@ -1,6 +1,9 @@
 package com.vergaraverse.api.web.dto;
 
+import com.vergaraverse.api.domain.model.StreetTimelineEntry;
+
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Read-only projection sent to Angular. Never exposes the JPA entity directly.
@@ -20,5 +23,6 @@ public record ClipMetadataDto(
         String gpsSource,
         Long[] highlights,
         Instant parsedAt,
-        Long sessionId
+        Long sessionId,
+        List<StreetTimelineEntry> streetTimeline
 ) {}

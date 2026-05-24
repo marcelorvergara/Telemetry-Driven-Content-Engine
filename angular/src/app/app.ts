@@ -2,7 +2,7 @@ import { Component, OnDestroy, OnInit, signal, computed } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { TelemetryResult, StravaGpsPoint } from './core/models/telemetry.model';
-import { ClipMetadataDto } from './core/models/clip.model';
+import { ClipMetadataDto, StreetTimelineEntry } from './core/models/clip.model';
 import { Mp4DemuxerService } from './core/services/mp4-demuxer';
 import { GpmfParserService } from './core/services/gpmf-parser.service';
 import { TelemetryMathService } from './core/services/telemetry-math';
@@ -17,6 +17,14 @@ import { ALL_THEMES } from './core/models/theme.model';
 // Extracted once from the original GX011209.MP4 via the demuxer's videoStartSec
 // output — replace [PLACEHOLDER] with that value before deploying.
 const SHOWCASE_VIDEO_START_SEC = 1778407717; // videoStartSec of GX011209.MP4 (1778407657) + 60 s clip offset
+
+// Hardcoded street timeline for the showcase clip — bypasses Google Maps API quota.
+// Replace streetName values after reviewing the actual footage route.
+const SHOWCASE_STREET_TIMELINE: StreetTimelineEntry[] = [
+  { t:      0, streetName: 'Avenida das Américas'    },
+  { t:  30000, streetName: 'Estrada dos Bandeirantes' },
+  { t:  60000, streetName: 'Rua Engenheiro Trindade'  },
+];
 
 interface FeedEntry {
   t: number;        // ms from video start
@@ -35,12 +43,14 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly telemetry    = signal<TelemetryResult | null>(null);
   readonly videoSrc     = signal<string>('assets/tiny_showcase.mp4');
   readonly isProcessing = signal<boolean>(false);
-  readonly feedEntries  = signal<FeedEntry[]>([]);
-  readonly library      = signal<ClipMetadataDto[]>([]);
+  readonly feedEntries      = signal<FeedEntry[]>([]);
+  readonly library          = signal<ClipMetadataDto[]>([]);
+  readonly streetTimeline   = signal<StreetTimelineEntry[]>([]);
   pipelineError: string | null = null;
 
   readonly allThemes       = ALL_THEMES;
-  readonly showMapPath  = signal<boolean>(false);
+  readonly showStreetName = signal<boolean>(true);
+  readonly showMapPath    = signal<boolean>(false);
   readonly mapZoom      = signal<number>(1);
   readonly zoomLabel    = computed(() => {
     const z = this.mapZoom();
@@ -115,6 +125,9 @@ export class AppComponent implements OnInit, OnDestroy {
       const gpxFile = new File([gpxBlob], 'strava 10052026.gpx', { type: 'application/gpx+xml' });
       await this.processGpxFile(gpxFile);
 
+      // Showcase bypasses the geocoding API — use the hardcoded constant instead.
+      this.streetTimeline.set(SHOWCASE_STREET_TIMELINE);
+
       this.showMapPath.set(true);
       this.mapMode.set('full');
 
@@ -136,6 +149,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.syncOffsetMs.set(0);
     this.telemetry.set(null);
     this.feedEntries.set([]);
+    this.streetTimeline.set([]);
     this.pipelineError = null;
     this.isProcessing.set(true);
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
@@ -181,13 +195,18 @@ export class AppComponent implements OnInit, OnDestroy {
 
       // Stage 4 — Library write-through: upsert the summary to PostgreSQL.
       // Fire-and-forget per the Data Boundary Rule; silent degradation on failure.
-      this.clipApi.upsert(buildClipRequest(file, result)).subscribe({
-        next: saved => this.library.update(existing => {
-          const idx = existing.findIndex(c => c.id === saved.id);
-          return idx >= 0
-            ? [...existing.slice(0, idx), saved, ...existing.slice(idx + 1)]
-            : [saved, ...existing];
-        }),
+      // stravaGps() is forwarded so the backend can geocode Strava waypoints when
+      // GoPro GPS is absent (smartphone-only pipeline).
+      this.clipApi.upsert(buildClipRequest(file, result, this.stravaGps())).subscribe({
+        next: saved => {
+          this.streetTimeline.set(saved.streetTimeline ?? []);
+          this.library.update(existing => {
+            const idx = existing.findIndex(c => c.id === saved.id);
+            return idx >= 0
+              ? [...existing.slice(0, idx), saved, ...existing.slice(idx + 1)]
+              : [saved, ...existing];
+          });
+        },
         error: err => console.warn('[API] POST /api/clips failed (silent degradation):', err),
       });
 

@@ -316,7 +316,7 @@ The `wasm_exec.js` runtime bootstrap in `angular/src/assets/` must match the Tin
 |---|---|---|
 | `GET` | `/api/clips` | Returns all catalogued clips sorted by insert order |
 | `GET` | `/api/clips/lookup?filename=&fileSize=` | `200` if clip exists (skip WASM), `404` if cache miss (run WASM) |
-| `POST` | `/api/clips` | Upserts a clip summary; auto-creates a `RideSession` if `sessionId` is null |
+| `POST` | `/api/clips` | Upserts a clip summary; geocodes GPS snapshots via Google Maps API; returns `streetTimeline` |
 
 All endpoints are CORS-enabled for `http://localhost:4200`.
 
@@ -359,12 +359,16 @@ graph TD
     end
 
     subgraph Backend_Server["Persistence Layer"]
-        B -->|REST API: Metadata/Sessions| I[Spring Boot 3]
+        B -->|"REST API: Metadata + GPS Snapshots"| I[Spring Boot 3]
         I -->|JPA/Hibernate| J[(PostgreSQL)]
+        I -->|"Geocode GPS snapshots (virtual threads, 3 s cap)"| K[Google Maps Geocoding API]
+        K -->|Street names| I
+        I -->|"Street Timeline (t → streetName)"| B
     end
 
     style C fill:#00ffff,stroke:#333,stroke-width:2px,color:#000
     style D fill:#00ffff,stroke:#333,stroke-width:2px,color:#000
     style G fill:#ff00ff,stroke:#333,stroke-width:2px,color:#000
     style J fill:#333,stroke:#ff00ff,stroke-width:2px,color:#fff
-    ```
+    style K fill:#4285F4,stroke:#333,stroke-width:2px,color:#fff
+```

@@ -73,6 +73,13 @@
       <div class="control-group">
         <span class="control-group-label">MAP</span>
         <div class="control-group-body">
+          <label class="map-toggle" [class.active]="showStreetName()">
+            <input type="checkbox" [checked]="showStreetName()" (change)="showStreetName.set(!showStreetName())">
+            <span class="map-toggle-track">
+              <span class="map-toggle-thumb"></span>
+            </span>
+            <span class="map-toggle-label">STREET</span>
+          </label>
           <label class="map-toggle" [class.active]="showMapPath()">
             <input type="checkbox" [checked]="showMapPath()" (change)="showMapPath.set(!showMapPath())">
             <span class="map-toggle-track">
@@ -195,7 +202,9 @@
           [syncOffsetMs]="syncOffsetMs()"
           [telemetrySource]="telemetrySource()"
           [mapZoom]="mapZoom()"
-          [mapMode]="mapMode()" />
+          [mapMode]="mapMode()"
+          [streetTimeline]="streetTimeline()"
+          [showStreetName]="showStreetName()" />
       </div>
     </section>
 

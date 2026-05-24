@@ -1,6 +1,8 @@
 package com.vergaraverse.api.web.controller;
 
+import com.vergaraverse.api.domain.model.StreetTimelineEntry;
 import com.vergaraverse.api.service.ClipMetadataService;
+import com.vergaraverse.api.service.GeocodingService;
 import com.vergaraverse.api.web.dto.ClipMetadataDto;
 import com.vergaraverse.api.web.dto.CreateClipRequest;
 import jakarta.validation.Valid;
@@ -15,9 +17,11 @@ import java.util.List;
 public class ClipMetadataController {
 
     private final ClipMetadataService service;
+    private final GeocodingService    geocodingService;
 
-    public ClipMetadataController(ClipMetadataService service) {
-        this.service = service;
+    public ClipMetadataController(ClipMetadataService service, GeocodingService geocodingService) {
+        this.service          = service;
+        this.geocodingService = geocodingService;
     }
 
     // Angular calls this on app load to populate the dashboard clip library.
@@ -38,11 +42,14 @@ public class ClipMetadataController {
 
     // Angular write-through: called after WASM parsing completes successfully.
     // Upserts so re-parsing the same file refreshes data without a duplicate row.
+    // Geocoding runs outside the transaction — no DB connection is held during
+    // the Google Maps network calls (see GeocodingService for the 3 s cap).
     @PostMapping
     public ResponseEntity<ClipMetadataDto> create(
             @Valid @RequestBody CreateClipRequest req) {
+        List<StreetTimelineEntry> streetTimeline = geocodingService.resolveTimeline(req.gpsSnapshots());
         return ResponseEntity
                 .status(HttpStatus.CREATED)
-                .body(service.upsert(req));
+                .body(service.upsert(req, streetTimeline));
     }
 }

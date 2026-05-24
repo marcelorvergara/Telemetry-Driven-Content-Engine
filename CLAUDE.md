@@ -245,7 +245,7 @@ map: { backgroundAlpha: number; strokeWidth: number; showGrid: boolean; }
 
 - `backgroundAlpha` is the sole input to `ctx.globalAlpha` in `drawVectorMap`. It is the only legal place to control map transparency.
 - **`ctx.fillStyle` for the map background reads `theme.colors.secondary`.** This is a known shared dependency: `colors.secondary` is also consumed by the G-force bar outline and peak-marker stroke in `drawGForceBar`. Changing `colors.secondary` in any preset will affect both. Future fix: add `color: string` to the `map` sub-object and update the single `ctx.fillStyle` assignment in `drawVectorMap`.
-- **Optical-mix trap**: a light hex colour (e.g. `#FFFFFF`) at `backgroundAlpha < 0.5` over dark video pixels optically mixes to muddy gray. `CLEAN_SPORT` sets `backgroundAlpha: 0.85` as its floor for exactly this reason. Never lower a light-coloured preset below `0.7`.
+- **Optical-mix trap**: a light hex colour (e.g. `#FFFFFF`) at a partial `backgroundAlpha` (0.1–0.7) over dark video pixels optically mixes to muddy gray. `CLEAN_SPORT` and `VERGARA_YOUTUBE` use `backgroundAlpha: 0` (fully transparent — no background box). Setting alpha to `0` is safe because there is no partial mix. If re-introducing a background for a light-coloured preset, use `0.85` or above — never the `0.1–0.7` range.
 - The `ThemeService.updateMapAlpha(alpha: number)` method patches the active signal without overwriting `strokeWidth` or `showGrid`. Use it — do not call `setTheme()` with a reconstructed object just to change alpha.
 
 ### Sensor Noise Floors — Do Not Lower

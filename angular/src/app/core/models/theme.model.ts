@@ -41,7 +41,7 @@ export const VERGARA_YOUTUBE: ThemeConfig = {
   layout: 'spread',
   speedUpdateIntervalMs: 0,
   gForceBehavior: 'instant',
-  map: { backgroundAlpha: 0.4, strokeWidth: 2, showGrid: false },
+  map: { backgroundAlpha: 0, strokeWidth: 2, showGrid: false },
 };
 
 export const CLEAN_SPORT: ThemeConfig = {
@@ -62,7 +62,7 @@ export const CLEAN_SPORT: ThemeConfig = {
   layout: 'stacked',
   speedUpdateIntervalMs: 250,
   gForceBehavior: 'instant',
-  map: { backgroundAlpha: 0.85, strokeWidth: 2, showGrid: false },
+  map: { backgroundAlpha: 0, strokeWidth: 2, showGrid: false },
 };
 
 export const VERGARA_TIKTOK: ThemeConfig = {
