@@ -50,8 +50,3 @@ jobs:
           service: vergaraverse-api
           image: southamerica-east1-docker.pkg.dev/vergaraverse/vergaraverse-docker-repo/vergaraverse-api:latest
           region: southamerica-east1
-          secrets: |
-            NEON_DB_URL=${{ secrets.NEON_DB_URL }}
-            NEON_DB_USERNAME=${{ secrets.NEON_DB_USERNAME }}
-            NEON_DB_PASSWORD=${{ secrets.NEON_DB_PASSWORD }}
-            GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
