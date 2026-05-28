@@ -41,7 +41,7 @@ interface FeedEntry {
 })
 export class AppComponent implements OnInit, OnDestroy {
   readonly telemetry    = signal<TelemetryResult | null>(null);
-  readonly videoSrc     = signal<string>('assets/tiny_showcase.mp4');
+  readonly videoSrc     = signal<string>('https://vergaraverse.com/tiny_showcase.mp4');
   readonly isProcessing = signal<boolean>(false);
   readonly feedEntries      = signal<FeedEntry[]>([]);
   readonly library          = signal<ClipMetadataDto[]>([]);
@@ -95,7 +95,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private async loadDefaultAssets(): Promise<void> {
     this.telemetrySource.set('Strava');
     this.isProcessing.set(true);
-    this.videoSrc.set('assets/tiny_showcase.mp4');
+    this.videoSrc.set('https://vergaraverse.com/tiny_showcase.mp4');
 
     try {
       const [binBuffer, gpxBlob] = await Promise.all([
