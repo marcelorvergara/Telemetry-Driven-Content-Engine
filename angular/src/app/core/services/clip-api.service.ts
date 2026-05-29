@@ -36,10 +36,13 @@ export function buildClipRequest(
     result.accl.at(-1)?.t ?? 0,
   );
 
-  // For geocoding: prefer locked GPS; fall back to all GPS9 samples (even
-  // fix<2) when none are locked. Unverified coordinates are usually accurate
-  // enough for reverse-geocoding to a street name.
-  const snapshotGps = lockedGps.length > 0 ? lockedGps : result.gps;
+  // For geocoding: prefer locked GPS, then GPS9 samples with non-zero coords
+  // (fix<2 but receiver still output a real position). Zero lat/lon means the
+  // receiver had no position data — sending 0,0 to Google Maps returns the Gulf
+  // of Guinea, so those samples are excluded and Strava becomes the fallback.
+  const snapshotGps = lockedGps.length > 0
+    ? lockedGps
+    : result.gps.filter(g => g.lat !== 0 || g.lon !== 0);
 
   return {
     filename:         file.name,
