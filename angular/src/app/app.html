@@ -80,6 +80,16 @@
             </span>
             <span class="map-toggle-label">STREET</span>
           </label>
+          @if (stravaGps().length > 0 && !hasGoProGpsFix() && streetTimeline().length > 0) {
+            <label class="map-toggle" [class.active]="reverseStravaDirection()">
+              <input type="checkbox" [checked]="reverseStravaDirection()"
+                     (change)="reverseStravaDirection.set(!reverseStravaDirection())">
+              <span class="map-toggle-track">
+                <span class="map-toggle-thumb"></span>
+              </span>
+              <span class="map-toggle-label">REVERSE</span>
+            </label>
+          }
           <label class="map-toggle" [class.active]="showMapPath()">
             <input type="checkbox" [checked]="showMapPath()" (change)="showMapPath.set(!showMapPath())">
             <span class="map-toggle-track">
@@ -203,7 +213,7 @@
           [telemetrySource]="telemetrySource()"
           [mapZoom]="mapZoom()"
           [mapMode]="mapMode()"
-          [streetTimeline]="streetTimeline()"
+          [streetTimeline]="effectiveStreetTimeline()"
           [showStreetName]="showStreetName()" />
       </div>
     </section>

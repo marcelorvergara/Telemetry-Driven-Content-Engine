@@ -68,6 +68,20 @@ export class AppComponent implements OnInit, OnDestroy {
     const t = this.telemetry();
     return !!(t && (t.gps.length > 0 || t.accl.length > 0));
   });
+  readonly hasGoProGpsFix = computed(() => {
+    const t = this.telemetry();
+    return !!(t && t.gps.some(g => g.fix >= 2));
+  });
+  readonly reverseStravaDirection = signal<boolean>(false);
+  readonly effectiveStreetTimeline = computed(() => {
+    const timeline = this.streetTimeline();
+    if (!this.reverseStravaDirection() || timeline.length === 0) return timeline;
+    const n = timeline.length;
+    return timeline.map((_, i) => ({
+      t:          timeline[i].t,
+      streetName: timeline[n - 1 - i].streetName,
+    }));
+  });
 
   private objectUrl: string | null = null;
 
@@ -147,6 +161,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   private async processFile(file: File): Promise<void> {
     this.syncOffsetMs.set(0);
+    this.reverseStravaDirection.set(false);
     this.telemetry.set(null);
     this.feedEntries.set([]);
     this.streetTimeline.set([]);
