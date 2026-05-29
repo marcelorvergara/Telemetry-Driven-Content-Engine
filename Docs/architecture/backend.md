@@ -48,20 +48,46 @@ If the number of highlights per clip needs to grow beyond ~20 elements, reconsid
 
 When Angular POSTs a clip summary to `/api/clips`, it includes a sparse `gpsSnapshots` array — one GPS coordinate per `SNAPSHOT_INTERVAL_MS` (15 seconds) of video duration. The controller passes these to `GeocodingService.resolveTimeline()` before the database upsert, returning a `streetTimeline` array with the response.
 
-### `SNAPSHOT_INTERVAL_MS = 15 000`
+### `SNAPSHOT_INTERVAL_MS = 5 000`
 
-Angular's `buildGpsSnapshots()` in `clip-api.service.ts` selects one GPS point every 15 seconds using a binary floor search. A 71-second clip produces ~5 snapshot points — enough to capture street transitions within that window. Increasing this interval risks missing transitions; the previous value of `60 000` (60 s) only produced 2 points for a 71-second clip, both often on the same street.
+Angular's `buildGpsSnapshots()` in `clip-api.service.ts` selects one GPS point every **5 seconds** using a binary floor search. A 71-second clip produces ~15 snapshot points — dense enough to capture street transitions at typical urban cycling speeds. The previous value of `15 000` (15 s) produced only ~5 points, which missed back-to-back short blocks. Do not raise this value above `15 000`.
 
 **GPS source priority:**
 1. GoPro `GPS9` locked samples (`fix >= 2`) — preferred
-2. Strava `StravaGpsPoint[]` — fallback when GoPro GPS is absent
-3. `null` — when neither source exists
+2. GoPro `GPS9` unlocked samples with non-zero coords — second fallback (receiver had a position but no satellite lock)
+3. Strava `StravaGpsPoint[]` — fallback when GoPro GPS is absent entirely
+4. `null` — when neither source exists
+
+**Zero-coord guard:** samples where `lat === 0 && lon === 0` are excluded from all paths. Sending `0,0` to Google Maps returns a street in the Gulf of Guinea.
+
+### Strava t-Normalization
+
+Strava GPS timestamps live in an absolute Unix epoch that is unrelated to the GoPro video's start time. If Strava snapshot `t` values are sent as-is, `findStreetAtTime()` (a floor search keyed on video playback time starting at 0) will always return the same timeline entry because all Strava `t` values are far larger than any video playback time.
+
+`buildGpsSnapshots()` remaps Strava `t` values from the ride's own time range into the video's time range before emitting snapshots:
+
+```typescript
+// Strava: remap t from [startT, endT] → [0, durationMs]
+const snapshotT = Math.round(((targetT - startT) / stravaRange) * durationMs);
+```
+
+GoPro snapshots keep their raw `t` unchanged — they already live in `[0, durationMs]`.
+
+**Limitation:** this is a linear approximation. It assumes the Strava ride covers the same geographic route as the video clip. When the Strava file covers a longer multi-hour ride and the clip is only a few minutes, the normalization maps a proportional slice of the Strava route's streets to the video's duration. Streets outside that slice are unreachable.
 
 ### `GeocodingService` — Concurrent Reverse Geocoding
 
 Spring Boot geocodes all snapshot points in parallel using **virtual threads** (Java 21). Each point makes a synchronous HTTP call to `https://maps.googleapis.com/maps/api/geocode/json`. A `CompletableFuture.allOf()` with a **3-second hard deadline** caps the total wall-clock time regardless of network latency — slow or failed individual geocodes are silently skipped.
 
 Result: `List<StreetTimelineEntry>` sorted ascending by `t` (ms from video start). Each entry pairs a timestamp with the `route` component of the Google Maps response (street name without numbers).
+
+**Log format:**
+```
+INFO  [GEOCODING] Resolving 61 snapshots ...
+WARN  [GEOCODING] 3 s deadline exceeded — collecting partial results   ← only on timeout
+INFO  [GEOCODING] Resolved 58/61 streets in 2847 ms
+```
+Individual per-coordinate failures are logged at `DEBUG` — invisible at Cloud Run's default `INFO` filter. The summary line reports the final resolved/total count. `org.hibernate.SQL` is set to `WARN` in `application.yml` — never re-enable `show-sql: true` or `org.hibernate.SQL: DEBUG` in production; these dump every SQL column on its own line, flooding Cloud Run logs.
 
 ### Transaction Boundary
 

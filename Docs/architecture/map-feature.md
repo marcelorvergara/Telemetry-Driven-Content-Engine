@@ -324,9 +324,48 @@ Returns the `streetName` of the **last entry whose `.t <= timeMs`** — the road
 
 ### Geocoding Density Rule
 
-`SNAPSHOT_INTERVAL_MS = 15_000` (15 s) in `clip-api.service.ts`. At this interval a 75-second clip produces ~6 geocoding points, capturing street transitions within a 15-second window. **Do not raise this value above 30 000** — the previous value of `60 000` produced only 2 points for a 71-second clip, both often falling on the same street, causing the name to never change during playback.
+`SNAPSHOT_INTERVAL_MS = 5_000` (5 s) in `clip-api.service.ts`. At this interval a 75-second clip produces ~16 geocoding points, capturing street transitions even in dense urban grids. **Do not raise this value above 15 000** — at 15 s, short consecutive streets can be skipped entirely when two successive snapshots land on the same road.
 
-Note: existing clips in the database were geocoded at the old interval. Re-uploading a clip triggers fresh geocoding at the current density.
+Note: existing clips in the database were geocoded at the old interval (15 s, and before that 60 s). Re-uploading a clip triggers fresh geocoding at the current density.
+
+---
+
+## REVERSE Direction Toggle
+
+When GoPro GPS9 has no satellite lock (`fix < 2` for all samples), the Strava GPX is used as the positional fallback. The Strava ride may have traversed the same streets in the opposite direction to the GoPro clip — producing a street timeline that appears to play backwards relative to the video.
+
+### Signals
+
+- `hasGoProGpsFix: Signal<boolean>` (computed in `AppComponent`) — `true` when any GPS9 sample has `fix >= 2`.
+- `reverseStravaDirection: WritableSignal<boolean>` — user-controlled toggle. Reset to `false` in `processFile()` alongside `syncOffsetMs.set(0)`.
+- `effectiveStreetTimeline: Signal<StreetTimelineEntry[]>` (computed) — when `reverseStravaDirection()` is `true`, returns the timeline with `streetName` values reversed across the same `t` slots; otherwise returns `streetTimeline()` unchanged:
+
+```typescript
+readonly effectiveStreetTimeline = computed(() => {
+  const timeline = this.streetTimeline();
+  if (!this.reverseStravaDirection() || timeline.length === 0) return timeline;
+  const n = timeline.length;
+  return timeline.map((_, i) => ({
+    t:          timeline[i].t,
+    streetName: timeline[n - 1 - i].streetName,
+  }));
+});
+```
+
+`app.html` passes `[streetTimeline]="effectiveStreetTimeline()"` to `TelemetryOverlay` — the overlay is unaware of the reversal.
+
+### REVERSE Toggle Visibility
+
+The toggle is only rendered when **all three** conditions hold:
+```html
+@if (stravaGps().length > 0 && !hasGoProGpsFix() && streetTimeline().length > 0)
+```
+
+- Hidden for GoPro clips with valid satellite lock — direction is exact from GPS9 timestamps.
+- Hidden before a street timeline has been returned from the backend.
+- Only visible when the Strava fallback was actually used for geocoding.
+
+**Never mutate `StreetTimelineEntry.t` to implement reversal.** The `t` values are the fixed geocoding timestamps; only the `streetName` assignments are swapped.
 
 ---
 
