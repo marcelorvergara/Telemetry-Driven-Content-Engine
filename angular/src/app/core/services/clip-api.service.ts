@@ -9,7 +9,7 @@ import { TelemetryResult, GPS9Sample, ACCLSample, StravaGpsPoint } from '../mode
 
 const G                    = 9.80665; // m/s²
 const TOP_HIGHLIGHTS       = 5;
-const SNAPSHOT_INTERVAL_MS = 15_000;  // one geocode point per 15 s of video
+const SNAPSHOT_INTERVAL_MS = 5_000;   // one geocode point per 5 s of video
 
 // ── Public extraction helper ─────────────────────────────────────────────────
 // Derives the ClipMetadata summary from the raw WASM parse result and the
