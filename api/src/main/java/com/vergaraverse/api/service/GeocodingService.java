@@ -45,6 +45,10 @@ public class GeocodingService {
     public List<StreetTimelineEntry> resolveTimeline(List<GpsSnapshotPoint> snapshots) {
         if (snapshots == null || snapshots.isEmpty()) return List.of();
 
+        int total = snapshots.size();
+        long t0 = System.currentTimeMillis();
+        log.info("[GEOCODING] Resolving {} snapshots ...", total);
+
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<CompletableFuture<StreetTimelineEntry>> futures = snapshots.stream()
                     .map(snap -> CompletableFuture.supplyAsync(() -> resolveOne(snap), executor))
@@ -59,12 +63,16 @@ public class GeocodingService {
                 log.warn("[GEOCODING] allOf interrupted: {}", e.getMessage());
             }
 
-            return futures.stream()
+            List<StreetTimelineEntry> resolved = futures.stream()
                     .filter(f -> f.isDone() && !f.isCompletedExceptionally())
                     .map(CompletableFuture::join)
                     .filter(entry -> entry != null)
                     .sorted(Comparator.comparingLong(StreetTimelineEntry::t))
                     .toList();
+
+            log.info("[GEOCODING] Resolved {}/{} streets in {} ms",
+                    resolved.size(), total, System.currentTimeMillis() - t0);
+            return resolved;
         }
     }
 
@@ -102,7 +110,7 @@ public class GeocodingService {
                     .orElse(null);
 
         } catch (Exception e) {
-            log.warn("[GEOCODING] Failed for ({}, {}): {}", snap.lat(), snap.lon(), e.getMessage());
+            log.debug("[GEOCODING] Failed for ({}, {}): {}", snap.lat(), snap.lon(), e.getMessage());
             return null;
         }
     }

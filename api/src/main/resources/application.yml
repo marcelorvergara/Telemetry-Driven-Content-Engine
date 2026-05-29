@@ -21,12 +21,11 @@ spring:
       # Switch to 'validate' + enable Flyway (below) before any production deploy.
       # WARNING: 'update' adds columns but never drops them — renames create orphan columns.
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     open-in-view: false   # prevent lazy-load anti-pattern leaking through REST layer
     properties:
       hibernate:
-        dialect:    org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
 
   flyway:
     # Disabled while schema is still evolving under ddl-auto: update.
@@ -43,5 +42,5 @@ server:
 
 logging:
   level:
-    com.vergaraverse: DEBUG
-    org.hibernate.SQL: DEBUG
+    com.vergaraverse: INFO
+    org.hibernate.SQL: WARN
