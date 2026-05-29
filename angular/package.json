@@ -9,7 +9,9 @@
     "test": "ng test",
     "build:wasm": "cd ../go-wasm && tinygo build -o gpmf.wasm -target wasm . && echo built gpmf.wasm",
     "copy:wasm_exec": "node -e \"const p=require('child_process').execSync('tinygo env TINYGOROOT').toString().trim(); require('fs').copyFileSync(p+'/targets/wasm_exec.js','public/assets/wasm_exec.js'); console.log('copied wasm_exec.js');\"",
-    "prepare:wasm": "npm run build:wasm && npm run copy:wasm_exec"
+    "prepare:wasm": "npm run build:wasm && npm run copy:wasm_exec",
+    "deploy": "npm run build && wrangler deploy",
+    "preview": "npm run build && wrangler dev"
   },
   "private": true,
   "packageManager": "npm@11.13.0",
@@ -32,6 +34,7 @@
     "jsdom": "^28.0.0",
     "prettier": "^3.8.1",
     "typescript": "~5.9.2",
-    "vitest": "^4.0.8"
+    "vitest": "^4.0.8",
+    "wrangler": "^4.95.0"
   }
 }
