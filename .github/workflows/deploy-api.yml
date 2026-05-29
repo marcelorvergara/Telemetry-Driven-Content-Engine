@@ -50,3 +50,4 @@ jobs:
           service: vergaraverse-api
           image: southamerica-east1-docker.pkg.dev/vergaraverse/vergaraverse-docker-repo/vergaraverse-api:latest
           region: southamerica-east1
+          flags: '--allow-unauthenticated'
