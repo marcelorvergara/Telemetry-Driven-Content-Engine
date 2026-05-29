@@ -11,8 +11,9 @@ public class WebConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
                 .allowedOrigins(
-                        "http://localhost:4200", 
-                        "https://vergaraverse.web.app", 
+                        "http://localhost:4200",
+                        "https://vergaraverse.com",
+                        "https://vergaraverse.web.app",
                         "https://vergaraverse.firebaseapp.com"
                 )
                 .allowedMethods("GET", "POST", "OPTIONS")
