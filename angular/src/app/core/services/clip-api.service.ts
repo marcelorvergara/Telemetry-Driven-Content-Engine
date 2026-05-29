@@ -87,12 +87,19 @@ function buildGpsSnapshots(
 
   const snapshots: GpsSnapshotPoint[] = [];
   const seen = new Set<number>();
+  const stravaRange = endT - startT;
 
   for (let targetT = startT; targetT <= endT; targetT += SNAPSHOT_INTERVAL_MS) {
     const point = floorSearch(source, targetT);
     if (point && !seen.has(point.t)) {
       seen.add(point.t);
-      snapshots.push({ t: point.t, lat: point.lat, lon: point.lon });
+      // Strava: remap t from [startT, endT] → [0, durationMs] so that
+      // findStreetAtTime() matches video playback time (which starts at 0).
+      // GoPro: keep raw t — it already lives in [0, durationMs].
+      const snapshotT = useGoPro
+        ? point.t
+        : Math.round(((targetT - startT) / stravaRange) * durationMs);
+      snapshots.push({ t: snapshotT, lat: point.lat, lon: point.lon });
     }
   }
 
