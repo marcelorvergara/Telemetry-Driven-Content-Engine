@@ -501,6 +501,37 @@ export class TelemetryOverlay implements OnDestroy {
     return result;
   }
 
+  // Shrinks the font until the label fits within maxPx, then truncates with …
+  // only if the minimum font floor is still exceeded. Sets ctx.font as a side
+  // effect so the caller can measureText / fillText immediately after.
+  private fitStreetLabel(
+    ctx: CanvasRenderingContext2D,
+    raw: string,
+    fontFamily: string,
+    startPx: number,
+    minPx: number,
+    maxPx: number,
+  ): { fontSize: number; label: string } {
+    let fontSize = startPx;
+    ctx.font = `bold ${fontSize}px ${fontFamily}`;
+
+    while (ctx.measureText(raw).width > maxPx && fontSize > minPx) {
+      fontSize--;
+      ctx.font = `bold ${fontSize}px ${fontFamily}`;
+    }
+
+    if (ctx.measureText(raw).width <= maxPx) {
+      return { fontSize, label: raw };
+    }
+
+    // Minimum font floor reached and text still overflows — truncate as last resort.
+    let label = raw;
+    while (label.length > 1 && ctx.measureText(label + '…').width > maxPx) {
+      label = label.slice(0, -1);
+    }
+    return { fontSize, label: label + '…' };
+  }
+
   // Renders the current street name as a single line of canvas text.
   // ctx.save/restore isolates font, fillStyle, shadowBlur, and textBaseline —
   // no state leaks into adjacent draw calls.
@@ -515,28 +546,27 @@ export class TelemetryOverlay implements OnDestroy {
     const raw = this.findStreetAtTime(timeMs);
     if (!raw) return;
 
-    const MAX_CHARS = 20;
-    const label = raw.length > MAX_CHARS ? raw.slice(0, MAX_CHARS - 1) + '…' : raw;
-
-    // Minimum 14 px so the name is legible on small embedded canvases.
-    const streetPx = Math.max(14, Math.round(height * 0.032));
+    const basePx  = Math.max(14, Math.round(height * 0.032));
+    const MIN_PX  = 12;
 
     ctx.save();
     ctx.textBaseline = 'alphabetic';
-    ctx.font         = `bold ${streetPx}px ${theme.font.primary}`;
 
     if (theme.layout === 'tiktok-cover') {
       // Positioned just above the G-force box (at 80% height), centered horizontally
       // so it does not overlap the left-side solid blocks.
+      const { fontSize, label } = this.fitStreetLabel(
+        ctx, raw, theme.font.primary, basePx, MIN_PX, width * 0.55,
+      );
       const gfBarY = Math.round(height * 0.80);
       const y      = gfBarY - 10;
       const textW  = ctx.measureText(label).width;
       const padX   = 8;
       const padY   = 4;
       const bgX    = width / 2 - textW / 2 - padX;
-      const bgY    = y - streetPx - padY;
+      const bgY    = y - fontSize - padY;
       ctx.fillStyle   = 'rgba(0,0,0,0.65)';
-      ctx.fillRect(bgX, bgY, textW + padX * 2, streetPx + padY * 2);
+      ctx.fillRect(bgX, bgY, textW + padX * 2, fontSize + padY * 2);
       ctx.textAlign   = 'center';
       ctx.fillStyle   = '#FFFFFF';
       ctx.shadowColor = 'rgba(0,0,0,0.9)';
@@ -547,6 +577,9 @@ export class TelemetryOverlay implements OnDestroy {
       // spread / stacked / dashboard: above the speed number column.
       // Uses theme primary (same colour as the speed readout) with a matching glow
       // so the label reads as part of the same HUD block.
+      const { label } = this.fitStreetLabel(
+        ctx, raw, theme.font.primary, basePx, MIN_PX, width * 0.42,
+      );
       const bigPx   = Math.max(16, Math.round(height * 0.095));
       const smallPx = Math.max(10, Math.round(height * 0.042));
       const y       = height - smallPx - bigPx - 16;
