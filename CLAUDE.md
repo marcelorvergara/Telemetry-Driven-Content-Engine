@@ -64,6 +64,64 @@ The parser owns the SCAL divide and emits physical units. Angular receives only 
 - **Strava GPX**: `absoluteUnixMs = new Date(timeStr).getTime()`. Compute `.t = absoluteUnixMs - videoStartEpoch * 1000`. Store `absoluteUnixMs` on `StravaGpsPoint` — the user may upload the GPX before loading the GoPro clip. Re-anchor in `onFileSelected()` after the video parse completes. Never recompute `absoluteUnixMs`.
 - All `.t` values: **milliseconds from video start** (`currentTime × 1000`). Never emit seconds, µs, or raw GPS epoch.
 
+### Street Name Geocoding
+
+#### GPS source priority — `buildGpsSnapshots` (`clip-api.service.ts`)
+
+**Strava GPX is always preferred over GoPro GPS for geocoding.** Firmware-smoothed wearable coordinates produce cleaner street name resolution than GoPro GPS multipath in urban environments.
+
+```typescript
+const useStrava = stravaGps.length > 0;          // Strava wins when present
+const useGoPro  = !useStrava && goProGps.length > 0;
+```
+
+Never invert this priority. The GoPro path (locked `fix >= 2` first, then non-zero unlocked) is a fallback for clips with no GPX loaded.
+
+Strava `.t` is **already anchored to video start** (ms). No remapping is needed — filter to `[0, durationMs]` only. Zero lat/lon samples are excluded from both sources (geocodes to Gulf of Guinea).
+
+`SNAPSHOT_INTERVAL_MS = 5_000` — one geocode point per 5 s of video.
+
+#### Re-geocode timing — `lastVideoFile` pattern (`app.ts`)
+
+`processFile()` fires `clipApi.upsert()` before the user loads a GPX, so the initial geocode always uses GoPro GPS (or null). `processGpxFile()` corrects this by re-firing the API once Strava data is available:
+
+```typescript
+// app.ts — set at the start of processFile():
+private lastVideoFile: File | null = null;
+
+// processGpxFile() — after this.stravaGps.set(data):
+if (telemetry && this.lastVideoFile) {
+  this.clipApi.upsert(buildClipRequest(this.lastVideoFile, telemetry, data)).subscribe(...);
+}
+```
+
+`lastVideoFile` stays `null` in `loadDefaultAssets()` (never calls `processFile`), so the `if` guard prevents an unwanted API call for the showcase.
+
+#### Street name anticipation — `STREET_ANTICIPATION_MS` (`telemetry-overlay.ts`)
+
+With 5-second sampling, the geocoded `.t` is when the GPS receiver was at that location — not when you physically crossed the street boundary. `STREET_ANTICIPATION_MS = 3_500` corrects for this lag by offsetting the lookup time:
+
+```typescript
+// findStreetAtTime() — applied at lookup time only:
+const lookupMs = timeMs + STREET_ANTICIPATION_MS;
+```
+
+**Invariant: this offset lives exclusively at lookup time — never bake it into stored `StreetTimelineEntry.t` values.** Same rule as `syncOffsetMs`.
+
+#### Backend — always check Google Maps `status` field (`GeocodingService.java`)
+
+The Geocoding API always returns HTTP 200. Errors are encoded in the `status` field (`REQUEST_DENIED`, `OVER_QUERY_LIMIT`, etc.). Never rely solely on `results.isEmpty()`:
+
+```java
+String status = (String) body.get("status");
+if (!"OK".equals(status) && !"ZERO_RESULTS".equals(status)) {
+    log.warn("[GEOCODING] API status={} for ({},{})", status, snap.lat(), snap.lon());
+    return null;
+}
+```
+
+`REQUEST_DENIED` means the API key is invalid, truncated, or the Geocoding API is not enabled in Google Cloud Console. Google Maps API keys are exactly **39 characters** starting with `AIzaSy`.
+
 ### Time-Shifted Interpolation — GPX Sync
 
 `syncOffsetMs` is a `WritableSignal<number>` owned by `AppComponent`. It corrects clock drift between the phone/action camera and the Strava GPS recording when the two devices were not synchronised.

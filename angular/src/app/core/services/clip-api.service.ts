@@ -67,39 +67,34 @@ export function buildClipRequest(
 // ── Private helpers ──────────────────────────────────────────────────────────
 
 // Samples one GPS coordinate per SNAPSHOT_INTERVAL_MS for geocoding.
-// goProGps may include fix<2 samples — caller decides what to pass.
-// Strava fallback iterates its own time range, independent of video duration,
-// so temporal misalignment between the ride and the clip is handled correctly.
+// Strava is preferred over GoPro when available — firmware-smoothed wearable
+// coordinates produce cleaner street name resolution than GoPro GPS multipath.
+// Strava .t is already anchored to video start (ms), so no remapping is needed;
+// filtering to [0, durationMs] ensures only clip-window points are geocoded.
 // Returns null when no valid source exists (e.g. file has neither GPS track).
 function buildGpsSnapshots(
   goProGps: GPS9Sample[],
   stravaGps: StravaGpsPoint[],
   durationMs: number,
 ): GpsSnapshotPoint[] | null {
-  const useGoPro  = goProGps.length > 0;
-  const useStrava = !useGoPro && stravaGps.length > 0;
-  if (!useGoPro && !useStrava) return null;
+  const useStrava = stravaGps.length > 0;
+  const useGoPro  = !useStrava && goProGps.length > 0;
+  if (!useStrava && !useGoPro) return null;
 
-  const source: { t: number; lat: number; lon: number }[] = useGoPro ? goProGps : stravaGps;
-  const startT = useGoPro ? 0              : (stravaGps[0]?.t     ?? 0);
-  const endT   = useGoPro ? durationMs     : (stravaGps.at(-1)?.t ?? 0);
-  if (endT <= startT) return null;
+  const source: { t: number; lat: number; lon: number }[] = useStrava
+    ? stravaGps.filter(p => p.t >= 0 && p.t <= durationMs)
+    : goProGps;
+
+  if (source.length === 0) return null;
 
   const snapshots: GpsSnapshotPoint[] = [];
   const seen = new Set<number>();
-  const stravaRange = endT - startT;
 
-  for (let targetT = startT; targetT <= endT; targetT += SNAPSHOT_INTERVAL_MS) {
+  for (let targetT = 0; targetT <= durationMs; targetT += SNAPSHOT_INTERVAL_MS) {
     const point = floorSearch(source, targetT);
     if (point && !seen.has(point.t)) {
       seen.add(point.t);
-      // Strava: remap t from [startT, endT] → [0, durationMs] so that
-      // findStreetAtTime() matches video playback time (which starts at 0).
-      // GoPro: keep raw t — it already lives in [0, durationMs].
-      const snapshotT = useGoPro
-        ? point.t
-        : Math.round(((targetT - startT) / stravaRange) * durationMs);
-      snapshots.push({ t: snapshotT, lat: point.lat, lon: point.lon });
+      snapshots.push({ t: point.t, lat: point.lat, lon: point.lon });
     }
   }
 

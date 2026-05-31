@@ -90,6 +90,12 @@ public class GeocodingService {
 
             if (body == null) return null;
 
+            String status = (String) body.get("status");
+            if (!"OK".equals(status) && !"ZERO_RESULTS".equals(status)) {
+                log.warn("[GEOCODING] API status={} for ({},{})", status, snap.lat(), snap.lon());
+                return null;
+            }
+
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> results = (List<Map<String, Object>>) body.get("results");
             if (results == null || results.isEmpty()) return null;
@@ -110,7 +116,7 @@ public class GeocodingService {
                     .orElse(null);
 
         } catch (Exception e) {
-            log.debug("[GEOCODING] Failed for ({}, {}): {}", snap.lat(), snap.lon(), e.getMessage());
+            log.warn("[GEOCODING] Exception for ({},{}): {}", snap.lat(), snap.lon(), e.getMessage());
             return null;
         }
     }

@@ -33,6 +33,12 @@ const EXPORT_H = 1080;
 // Applied to Strava-derived speed so the display behaviour is consistent across sources.
 const SPEED_FLOOR_MS = 8.0 / 3.6;
 
+// Snapshots are geocoded every 5 s, so the stored .t is the moment the GPS
+// receiver was at that location — not when you crossed the street boundary.
+// Anticipating by half the interval corrects for the sampling lag so the HUD
+// transitions to the new name near the physical crossing rather than 3–4 s after.
+const STREET_ANTICIPATION_MS = 3_500;
+
 interface LayoutAnchors {
   speedX: number;
   gfBarX: number;
@@ -484,11 +490,12 @@ export class TelemetryOverlay implements OnDestroy {
   private findStreetAtTime(timeMs: number): string | null {
     const timeline = this.streetTimeline();
     if (timeline.length === 0) return null;
+    const lookupMs = timeMs + STREET_ANTICIPATION_MS;
     let lo = 0, hi = timeline.length - 1;
     let result: string | null = null;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (timeline[mid].t <= timeMs) { result = timeline[mid].streetName; lo = mid + 1; }
+      if (timeline[mid].t <= lookupMs) { result = timeline[mid].streetName; lo = mid + 1; }
       else hi = mid - 1;
     }
     return result;

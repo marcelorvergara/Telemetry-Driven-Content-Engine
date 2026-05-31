@@ -83,7 +83,8 @@ export class AppComponent implements OnInit, OnDestroy {
     }));
   });
 
-  private objectUrl: string | null = null;
+  private objectUrl:     string | null = null;
+  private lastVideoFile: File   | null = null;
 
   constructor(
     private readonly demuxer:        Mp4DemuxerService,
@@ -160,6 +161,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   private async processFile(file: File): Promise<void> {
+    this.lastVideoFile = file;
     this.syncOffsetMs.set(0);
     this.reverseStravaDirection.set(false);
     this.telemetry.set(null);
@@ -294,6 +296,17 @@ export class AppComponent implements OnInit, OnDestroy {
     const videoStartSec = this.telemetry()?.videoStartEpoch ?? 0;
     const data = await this.stravaService.parseGpx(file, videoStartSec);
     this.stravaGps.set(data);
+
+    // Re-geocode with Strava coordinates when video was already loaded.
+    // processFile fires the initial API call before the GPX is available;
+    // this corrects the street timeline now that clean Strava GPS exists.
+    const telemetry = this.telemetry();
+    if (telemetry && this.lastVideoFile) {
+      this.clipApi.upsert(buildClipRequest(this.lastVideoFile, telemetry, data)).subscribe({
+        next: saved => this.streetTimeline.set(saved.streetTimeline ?? []),
+        error: err => console.warn('[API] GPX re-geocode failed:', err),
+      });
+    }
   }
 
   formatTime(ms: number): string {
